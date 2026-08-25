@@ -1,0 +1,6 @@
+{
+  "name": "SignLink - Sign Language Interpreter",
+  "description": "Real-time AI and live human sign language interpreter, text-to-sign visual keyboard, appointment booking, dictionary resource hub, and video interpretation suite.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
