@@ -10,7 +10,9 @@ import {
   ShieldCheck, 
   Camera, 
   Video, 
-  Volume2
+  Volume2,
+  Layers,
+  Activity
 } from 'lucide-react';
 import { UserProfile, AppSettings, AppNotification } from '../types';
 
@@ -25,6 +27,7 @@ interface HeaderProps {
   onOpenNotifications: () => void;
   onOpenAuth: () => void;
   onOpenExportZip: () => void;
+  onOpenArchitecture: () => void;
   isCallActive?: boolean;
 }
 
@@ -39,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
   onOpenAuth,
   onOpenExportZip,
+  onOpenArchitecture,
   isCallActive = false,
 }) => {
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -78,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </div>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 hidden sm:block">
-                AI & Live Video Interpretation
+                AI & Live Video Interpretation Suite
               </p>
             </div>
           </div>
@@ -154,7 +158,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
               }`}
             >
-              History
+              Vault & History
             </button>
 
             <button
@@ -172,6 +176,16 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Right Action Icons & Profile */}
           <div className="flex items-center space-x-2 sm:space-x-3">
             
+            {/* Architecture Telemetry Button */}
+            <button
+              onClick={onOpenArchitecture}
+              title="Inspect System Architecture & WebRTC Telemetry"
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/80 transition-all"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Architecture</span>
+            </button>
+
             {/* Quick Role Switcher Button */}
             <button
               onClick={onToggleRole}

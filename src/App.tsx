@@ -17,6 +17,7 @@ import { AuthModal } from './components/AuthModal';
 import { NotificationsModal } from './components/NotificationsModal';
 import { SystemErrorModal } from './components/SystemErrorModal';
 import { ExportZipModal } from './components/ExportZipModal';
+import { ArchitectureInspectorModal } from './components/ArchitectureInspectorModal';
 import { 
   UserProfile, 
   AppSettings, 
@@ -32,6 +33,7 @@ import {
   MOCK_INTERPRETERS, 
   MOCK_SESSION_HISTORY 
 } from './data/mockData';
+import { api } from './utils/api';
 
 export default function App() {
   // Global State
@@ -51,7 +53,25 @@ export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState<boolean>(false);
   const [isExportZipOpen, setIsExportZipOpen] = useState<boolean>(false);
+  const [isArchitectureOpen, setIsArchitectureOpen] = useState<boolean>(false);
   const [errorModalType, setErrorModalType] = useState<'camera' | 'connection' | 'maintenance' | null>(null);
+
+  // Load initial profile and notifications from backend API
+  useEffect(() => {
+    async function loadInitialBackendData() {
+      try {
+        const [profile, notifs] = await Promise.all([
+          api.getUserProfile(),
+          api.getNotifications()
+        ]);
+        if (profile) setUser(profile);
+        if (notifs && notifs.length > 0) setNotifications(notifs);
+      } catch (err) {
+        console.warn('Could not reach backend at boot, using local state:', err);
+      }
+    }
+    loadInitialBackendData();
+  }, []);
 
   // Dark Mode synchronization on document root
   useEffect(() => {
@@ -66,14 +86,15 @@ export default function App() {
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
-  const handleToggleRole = () => {
-    setUser(prev => {
-      const nextRole = prev.role === 'interpreter' ? 'user_deaf' : 'interpreter';
-      return {
-        ...prev,
-        role: nextRole
-      };
-    });
+  const handleToggleRole = async () => {
+    const nextRole = user.role === 'interpreter' ? 'user_deaf' : 'interpreter';
+    const updatedUser: UserProfile = {
+      ...user,
+      role: nextRole
+    };
+    setUser(updatedUser);
+    await api.updateUserProfile({ role: nextRole });
+
     if (user.role !== 'interpreter') {
       setActiveTab('interpreter_dashboard');
     } else {
@@ -86,14 +107,66 @@ export default function App() {
     setIsCallActive(true);
   };
 
-  const handleEndCall = () => {
+  const handleEndCall = async () => {
     setIsCallActive(false);
+    
+    // Construct session transcript from this completed call
+    const currentInterpreter = MOCK_INTERPRETERS.find(i => i.id === activeCallInterpreterId) || MOCK_INTERPRETERS[0];
+    const liveTranscript = [
+      { speaker: 'Interpreter' as const, time: '00:05', text: `Connected with ${currentInterpreter.name}. Translation active.` },
+      { speaker: 'Signer' as const, time: '00:20', text: 'Thank you for interpreting today. We covered prescription timings and follow-up lab dates.' },
+      { speaker: 'Speaker' as const, time: '00:45', text: 'Everything looks great on the health metrics. Maintain current activity and routine.' },
+      { speaker: 'Interpreter' as const, time: '01:10', text: 'Session concluding with verified mutual understanding.' }
+    ];
+
+    // Request AI summary and key terms from backend
+    const aiAnalysis = await api.summarizeSessionWithAI(
+      liveTranscript, 
+      `Consultation with ${currentInterpreter.name}`,
+      settings.primarySignLanguage
+    );
+
+    // Save session to backend
+    const saved = await api.saveSession({
+      type: 'interpreter_call',
+      title: `Live Session with ${currentInterpreter.name}`,
+      duration: '02m 45s',
+      language: settings.primarySignLanguage,
+      interpreterName: currentInterpreter.name,
+      interpreterAvatar: currentInterpreter.avatar,
+      summary: aiAnalysis.summary,
+      fullTranscript: liveTranscript,
+      keyTerms: aiAnalysis.keyTerms,
+      rating: 5
+    });
+
     // Automatically transition to session review for the completed call
-    setSelectedSessionHistory(MOCK_SESSION_HISTORY[0]);
+    setSelectedSessionHistory(saved);
   };
 
-  const handleMarkAllNotificationsAsRead = () => {
+  const handleMarkAllNotificationsAsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    await api.markAllNotificationsRead();
+  };
+
+  const handleBookSlot = async (interpreter: Interpreter, slot: string) => {
+    try {
+      await api.createBooking({
+        interpreterId: interpreter.id,
+        language: settings.primarySignLanguage,
+        date: 'Tomorrow',
+        time: slot || '02:00 PM',
+        durationMinutes: 45,
+        notes: `Appointment booked with ${interpreter.name}`
+      });
+      // Refresh notifications
+      const notifs = await api.getNotifications();
+      setNotifications(notifs);
+    } catch (err) {
+      console.error('Booking failed:', err);
+    }
+    setSelectedInterpreter(null);
+    setActiveTab('schedule');
   };
 
   return (
@@ -113,6 +186,7 @@ export default function App() {
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenExportZip={() => setIsExportZipOpen(true)}
+        onOpenArchitecture={() => setIsArchitectureOpen(true)}
         isCallActive={isCallActive}
       />
 
@@ -218,10 +292,7 @@ export default function App() {
         isOpen={selectedInterpreter !== null}
         onClose={() => setSelectedInterpreter(null)}
         onStartCall={handleStartCall}
-        onBookSlot={(int, slot) => {
-          setSelectedInterpreter(null);
-          setActiveTab('schedule');
-        }}
+        onBookSlot={handleBookSlot}
         settings={settings}
       />
 
@@ -240,9 +311,12 @@ export default function App() {
 
       <AuthModal
         isOpen={isAuthOpen}
-        onClose={() => > setIsAuthOpen(false)}
+        onClose={() => setIsAuthOpen(false)}
         currentUser={user}
-        onUpdateUser={setUser}
+        onUpdateUser={async (updated) => {
+          setUser(updated);
+          await api.updateUserProfile(updated);
+        }}
       />
 
       <NotificationsModal
@@ -270,6 +344,11 @@ export default function App() {
       <ExportZipModal
         isOpen={isExportZipOpen}
         onClose={() => setIsExportZipOpen(false)}
+      />
+
+      <ArchitectureInspectorModal
+        isOpen={isArchitectureOpen}
+        onClose={() => setIsArchitectureOpen(false)}
       />
 
     </div>

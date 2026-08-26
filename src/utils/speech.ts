@@ -1,19 +1,33 @@
 // Speech Synthesis and Recognition helper utilities
 
-export function speakText(text: string, rate: number = 1.0, pitch: number = 1.0) {
+export function speakText(
+  text: string, 
+  onEnd?: () => void,
+  rate: number = 1.0, 
+  pitch: number = 1.0
+) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     console.warn('Speech synthesis not supported in this browser.');
+    if (onEnd) onEnd();
     return;
   }
 
   window.speechSynthesis.cancel(); // Stop any pending speech
 
-  if (!text || text.trim().length === 0) return;
+  if (!text || text.trim().length === 0) {
+    if (onEnd) onEnd();
+    return;
+  }
 
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = Math.max(0.5, Math.min(2.0, rate));
   utterance.pitch = Math.max(0.5, Math.min(1.5, pitch));
   
+  if (onEnd) {
+    utterance.onend = onEnd;
+    utterance.onerror = onEnd;
+  }
+
   // Try to pick a natural sounding English or localized voice
   const voices = window.speechSynthesis.getVoices();
   const naturalVoice = voices.find(v => (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Premium')) && v.lang.startsWith('en')) 
@@ -62,11 +76,8 @@ export class SpeechToSignListener {
           }
 
           if (this.onResultCallback) {
-            if (finalTranscript) {
-              this.onResultCallback(finalTranscript.trim(), true);
-            } else if (interimTranscript) {
-              this.onResultCallback(interimTranscript.trim(), false);
-            }
+            const combined = finalTranscript || interimTranscript;
+            this.onResultCallback(combined, !!finalTranscript);
           }
         };
 
@@ -78,45 +89,44 @@ export class SpeechToSignListener {
         };
 
         this.recognition.onend = () => {
-          this.isListening = false;
+          if (this.isListening) {
+            try {
+              this.recognition.start();
+            } catch (e) {
+              // Ignore restart collision
+            }
+          }
         };
       }
     }
   }
 
-  public isSupported(): boolean {
-    return this.recognition !== null;
-  }
-
   public start(onResult: (transcript: string, isFinal: boolean) => void, onError?: (error: string) => void) {
-    if (!this.recognition) {
-      if (onError) onError('Speech recognition not supported in this browser.');
-      return;
-    }
-
     this.onResultCallback = onResult;
     this.onErrorCallback = onError || null;
+    this.isListening = true;
 
-    try {
-      this.recognition.start();
-      this.isListening = true;
-    } catch (e: any) {
-      console.warn('Speech recognition already started or failed:', e);
+    if (this.recognition) {
+      try {
+        this.recognition.start();
+      } catch (err) {
+        console.warn('SpeechRecognition start warning:', err);
+      }
     }
   }
 
   public stop() {
-    if (this.recognition && this.isListening) {
+    this.isListening = false;
+    if (this.recognition) {
       try {
         this.recognition.stop();
-      } catch (e) {
-        // ignore
+      } catch (err) {
+        // Ignore
       }
-      this.isListening = false;
     }
   }
 
-  public getStatus(): boolean {
-    return this.isListening;
+  public isSupported(): boolean {
+    return !!this.recognition;
   }
 }

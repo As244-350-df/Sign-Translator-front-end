@@ -1,0 +1,250 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public user profile and credentials for deaf/hard-of-hearing signers, hearing participants, or certified interpreters",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user" },
+        "name": { "type": "string", "maxLength": 100, "description": "Display name or professional title" },
+        "role": { "type": "string", "enum": ["user_deaf", "user_hearing", "interpreter", "admin"], "description": "Role determining permissions and access tier" },
+        "avatar": { "type": "string", "maxLength": 500, "description": "Profile picture URL or avatar token" },
+        "primaryLanguage": { "type": "string", "enum": ["ASL", "BSL", "Auslan", "LSF", "DGS", "IS"], "description": "Primary sign language dialect" },
+        "secondaryLanguage": { "type": "string", "maxLength": 50, "description": "Spoken or secondary signed language" },
+        "bio": { "type": "string", "maxLength": 500, "description": "Short bio or clinical experience" },
+        "verified": { "type": "boolean", "description": "RID or healthcare credential verification status" },
+        "certifications": { "type": "array", "description": "List of professional certifications (e.g. NIC-Master, SC:L, BEI)" },
+        "hourlyRate": { "type": "number", "description": "Standard rate per hour in USD" },
+        "rating": { "type": "number", "description": "Average review score from 1.0 to 5.0" },
+        "totalHours": { "type": "number", "description": "Cumulative interpreted or serviced hours" },
+        "availableStatus": { "type": "string", "enum": ["online", "busy", "offline"], "description": "Real-time dispatch availability" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account registration timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last profile update timestamp" }
+      },
+      "required": ["userId", "name", "role", "primaryLanguage", "availableStatus"]
+    },
+    "UserPrivateSettings": {
+      "title": "UserPrivateSettings",
+      "description": "Private PII and user-specific application preferences strictly isolated to the account owner",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "maxLength": 120, "description": "User email address" },
+        "phoneNumber": { "type": "string", "maxLength": 30, "description": "Emergency SMS contact number" },
+        "autoSpeakTranslation": { "type": "boolean", "description": "Automatically synthesize voice speech on gesture recognition" },
+        "speechVoiceRate": { "type": "number", "description": "Speech synthesis playback rate" },
+        "speechVoicePitch": { "type": "number", "description": "Speech synthesis pitch" },
+        "highContrastCaptions": { "type": "boolean", "description": "Enable high contrast captions for low vision" },
+        "fontSize": { "type": "string", "enum": ["normal", "large", "extra-large"], "description": "Preferred UI caption font size" },
+        "hapticFeedback": { "type": "boolean", "description": "Vibrate device on matched sign tokens" },
+        "soundEffects": { "type": "boolean", "description": "Play auditory cues for audio confirmation" },
+        "cameraFacing": { "type": "string", "enum": ["user", "environment"], "description": "Default camera lens selection" },
+        "darkTheme": { "type": "boolean", "description": "UI dark mode theme toggle" },
+        "detectionSensitivity": { "type": "string", "enum": ["high", "balanced", "low"], "description": "Hand landmark tracking threshold" },
+        "stripeCustomerId": { "type": "string", "maxLength": 100, "description": "Stripe Escrow customer identifier" },
+        "stripeConnectAccountId": { "type": "string", "maxLength": 100, "description": "Stripe Connect account for interpreter instant payouts" }
+      },
+      "required": ["email", "autoSpeakTranslation", "highContrastCaptions"]
+    },
+    "InterpreterProfile": {
+      "title": "InterpreterProfile",
+      "description": "Certified interpreter marketplace listing with rate tiers, credentials, and real-time dispatch metadata",
+      "type": "object",
+      "properties": {
+        "interpreterId": { "type": "string", "description": "UID of the certified interpreter" },
+        "name": { "type": "string", "maxLength": 100, "description": "Full legal/professional name" },
+        "title": { "type": "string", "maxLength": 100, "description": "Professional title (e.g. Certified Healthcare ASL Interpreter)" },
+        "avatar": { "type": "string", "maxLength": 500, "description": "Interpreter photo URL" },
+        "coverImage": { "type": "string", "maxLength": 500, "description": "Banner background image URL" },
+        "rating": { "type": "number", "description": "Average review rating (1.0 to 5.0)" },
+        "reviewsCount": { "type": "number", "description": "Total number of verified client reviews" },
+        "verified": { "type": "boolean", "description": "Verified registry certification indicator" },
+        "languages": { "type": "array", "description": "Supported sign language dialect codes (e.g. ASL, BSL)" },
+        "spokenLanguages": { "type": "array", "description": "Spoken languages (e.g. English, Spanish, French)" },
+        "certifications": { "type": "array", "description": "Accredited certifications (e.g. RID NIC-Advanced, BEI Medical)" },
+        "ratePerHour": { "type": "number", "description": "Hourly rate for scheduled sessions" },
+        "ratePerMinute": { "type": "number", "description": "Per-minute rate for on-demand urgent dispatch calls" },
+        "availableStatus": { "type": "string", "enum": ["online", "busy", "offline"], "description": "Live status for the instant dispatch radar" },
+        "bio": { "type": "string", "maxLength": 1000, "description": "Professional background and experience" },
+        "specialties": { "type": "array", "description": "Medical, Legal, Technical, Mental Health, Education" },
+        "experienceYears": { "type": "number", "description": "Years of professional interpreting experience" },
+        "completedSessions": { "type": "number", "description": "Total completed live sessions" }
+      },
+      "required": ["interpreterId", "name", "title", "rating", "verified", "languages", "ratePerHour", "availableStatus"]
+    },
+    "InterpreterReview": {
+      "title": "InterpreterReview",
+      "description": "Verified client review and rating for an interpreter session",
+      "type": "object",
+      "properties": {
+        "reviewId": { "type": "string", "description": "Unique review identifier" },
+        "sessionId": { "type": "string", "description": "Associated session identifier" },
+        "reviewerUserId": { "type": "string", "description": "UID of the reviewer" },
+        "reviewerName": { "type": "string", "maxLength": 100, "description": "Display name of reviewer" },
+        "rating": { "type": "number", "description": "Rating score from 1 to 5" },
+        "comment": { "type": "string", "maxLength": 500, "description": "Review text feedback" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of review" }
+      },
+      "required": ["reviewId", "sessionId", "reviewerUserId", "rating", "createdAt"]
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Live WebRTC video session, AI translation room, or scheduled interpreter consultation",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Unique session identifier" },
+        "type": { "type": "string", "enum": ["on_demand_dispatch", "scheduled_booking", "ai_translation"], "description": "Session modality" },
+        "userId": { "type": "string", "description": "Client user UID who initiated or booked the call" },
+        "interpreterId": { "type": "string", "description": "Matched interpreter UID (null for AI solo mode)" },
+        "interpreterName": { "type": "string", "maxLength": 100, "description": "Cached interpreter display name" },
+        "language": { "type": "string", "enum": ["ASL", "BSL", "Auslan", "LSF", "DGS", "IS"], "description": "Sign dialect utilized in session" },
+        "status": { "type": "string", "enum": ["pending", "matched", "in_progress", "completed", "cancelled"], "description": "Session lifecycle state" },
+        "scheduledDate": { "type": "string", "description": "Date string for scheduled bookings" },
+        "scheduledTime": { "type": "string", "description": "Time string for scheduled bookings" },
+        "startedAt": { "type": "string", "format": "date-time", "description": "Exact WebRTC room connect timestamp" },
+        "endedAt": { "type": "string", "format": "date-time", "description": "Room disconnect timestamp" },
+        "durationMinutes": { "type": "number", "description": "Total active call duration in minutes" },
+        "ratePerMinute": { "type": "number", "description": "Metered billing rate" },
+        "totalCost": { "type": "number", "description": "Calculated total session charge" },
+        "escrowHoldId": { "type": "string", "maxLength": 100, "description": "Stripe Escrow payment intent hold identifier" },
+        "payoutStatus": { "type": "string", "enum": ["pending", "held", "released", "refunded"], "description": "Escrow release status" },
+        "meetingRoomId": { "type": "string", "maxLength": 100, "description": "WebRTC SFU room channel token" },
+        "complianceHash": { "type": "string", "maxLength": 100, "description": "SHA-256 checksum verifying tamper-proof record storage" },
+        "summary": { "type": "string", "maxLength": 2000, "description": "Gemini clinical synthesis and meeting highlights" },
+        "keyTerms": { "type": "array", "description": "Key medical, legal, or technical terminology identified" },
+        "notes": { "type": "string", "maxLength": 1000, "description": "User personal or clinical notes" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["sessionId", "type", "userId", "language", "status", "createdAt"]
+    },
+    "TranscriptEntry": {
+      "title": "TranscriptEntry",
+      "description": "Diarized real-time dialogue turn in a live session",
+      "type": "object",
+      "properties": {
+        "entryId": { "type": "string", "description": "Sequential or UUID turn identifier" },
+        "speaker": { "type": "string", "enum": ["Signer", "Speaker", "Interpreter", "AI"], "description": "Speaker identity in conversation" },
+        "text": { "type": "string", "maxLength": 2000, "description": "Transcribed or translated text content" },
+        "timestamp": { "type": "string", "description": "Elapsed call time format e.g. 02:45" },
+        "confidence": { "type": "number", "description": "MediaPipe & Gemini recognition confidence score (0.0 to 1.0)" },
+        "handshape": { "type": "string", "maxLength": 100, "description": "Recognized ASL/BSL handshape classifier" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of speech/sign turn" }
+      },
+      "required": ["entryId", "speaker", "text", "timestamp", "createdAt"]
+    },
+    "DispatchQueueItem": {
+      "title": "DispatchQueueItem",
+      "description": "On-demand emergency triage queue item for instant interpreter matching",
+      "type": "object",
+      "properties": {
+        "dispatchId": { "type": "string", "description": "Unique dispatch request identifier" },
+        "userId": { "type": "string", "description": "UID of the requesting patient or deaf caller" },
+        "userName": { "type": "string", "maxLength": 100, "description": "Caller display name" },
+        "language": { "type": "string", "enum": ["ASL", "BSL", "Auslan", "LSF", "DGS", "IS"], "description": "Required sign language" },
+        "specialty": { "type": "string", "maxLength": 50, "description": "Context (e.g. Medical ER, Legal, Crisis)" },
+        "urgency": { "type": "string", "enum": ["urgent", "normal", "emergency"], "description": "Priority queue level" },
+        "status": { "type": "string", "enum": ["searching", "offered", "accepted", "expired", "cancelled"], "description": "Match status" },
+        "offeredToInterpreterId": { "type": "string", "description": "Current interpreter evaluating the 30-sec cascade" },
+        "offerExpiresAt": { "type": "string", "format": "date-time", "description": "30-second cascade timeout timestamp" },
+        "sessionId": { "type": "string", "description": "Created session identifier once accepted" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Request dispatch timestamp" }
+      },
+      "required": ["dispatchId", "userId", "language", "status", "urgency", "createdAt"]
+    },
+    "EscrowTransaction": {
+      "title": "EscrowTransaction",
+      "description": "Financial ledger record for metered billing, escrow holds, and instant interpreter payouts",
+      "type": "object",
+      "properties": {
+        "transactionId": { "type": "string", "description": "Unique ledger transaction ID" },
+        "sessionId": { "type": "string", "description": "Associated session ID" },
+        "payerUserId": { "type": "string", "description": "UID of the paying client" },
+        "payeeInterpreterId": { "type": "string", "description": "UID of the receiving interpreter" },
+        "amount": { "type": "number", "description": "Transaction value in USD" },
+        "currency": { "type": "string", "enum": ["USD", "EUR", "GBP", "AUD"], "description": "Currency code" },
+        "type": { "type": "string", "enum": ["escrow_hold", "session_settlement", "instant_payout", "refund"], "description": "Ledger entry type" },
+        "status": { "type": "string", "enum": ["held", "released", "settled", "failed", "refunded"], "description": "Payment status" },
+        "stripePaymentIntentId": { "type": "string", "maxLength": 100, "description": "Stripe PaymentIntent ID" },
+        "stripeTransferId": { "type": "string", "maxLength": 100, "description": "Stripe Connect Transfer ID" },
+        "durationMinutes": { "type": "number", "description": "Billed call duration" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Transaction recording timestamp" }
+      },
+      "required": ["transactionId", "sessionId", "payerUserId", "amount", "type", "status", "createdAt"]
+    },
+    "SignDictionaryItem": {
+      "title": "SignDictionaryItem",
+      "description": "Multilingual sign gesture dictionary item with phonetic guides and landmark shapes",
+      "type": "object",
+      "properties": {
+        "signId": { "type": "string", "description": "Unique dictionary sign ID" },
+        "name": { "type": "string", "maxLength": 100, "description": "Sign vocabulary name or phrase" },
+        "category": { "type": "string", "enum": ["alphabet", "number", "greetings", "common", "emergency", "questions", "family"], "description": "Vocabulary category" },
+        "language": { "type": "string", "enum": ["ASL", "BSL", "Auslan", "LSF", "DGS", "IS"], "description": "Dialect code" },
+        "description": { "type": "string", "maxLength": 500, "description": "Meaning and cultural usage context" },
+        "handshape": { "type": "string", "maxLength": 100, "description": "Primary dominant handshape" },
+        "movement": { "type": "string", "maxLength": 200, "description": "Motion dynamics and trajectory" },
+        "phoneticTip": { "type": "string", "maxLength": 200, "description": "Mnemonic or speech articulation tip" },
+        "svgHandPath": { "type": "string", "maxLength": 500, "description": "Hand shape vector rendering path" },
+        "tags": { "type": "array", "description": "Search and classification tags" }
+      },
+      "required": ["signId", "name", "category", "language", "handshape", "movement"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "User notification for session invites, interpreter matches, and billing receipts",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string", "description": "Unique notification ID" },
+        "userId": { "type": "string", "description": "Recipient user UID" },
+        "title": { "type": "string", "maxLength": 100, "description": "Notification title" },
+        "message": { "type": "string", "maxLength": 300, "description": "Notification body content" },
+        "read": { "type": "boolean", "description": "Read receipt status" },
+        "type": { "type": "string", "enum": ["booking", "session", "system", "alert"], "description": "Notification classification" },
+        "actionUrl": { "type": "string", "maxLength": 200, "description": "Deep link target path" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Notification timestamp" }
+      },
+      "required": ["notificationId", "userId", "title", "message", "read", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Public user profile and credentials for signers, interpreters, and clients"
+    },
+    "/users/{userId}/private/settings": {
+      "schema": "UserPrivateSettings",
+      "description": "Private account settings, PII, preferences, and payment accounts"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "AppNotification",
+      "description": "Personalized inbox notifications for a specific user"
+    },
+    "/interpreters/{interpreterId}": {
+      "schema": "InterpreterProfile",
+      "description": "Verified certified interpreters marketplace listing with real-time dispatch availability"
+    },
+    "/interpreters/{interpreterId}/reviews/{reviewId}": {
+      "schema": "InterpreterReview",
+      "description": "Verified client reviews and rating testimonials for an interpreter"
+    },
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Live WebRTC interpretation calls, AI translation records, and scheduled bookings"
+    },
+    "/sessions/{sessionId}/transcript/{entryId}": {
+      "schema": "TranscriptEntry",
+      "description": "Diarized live transcript entries with timestamped speech and sign tokens"
+    },
+    "/dispatchQueue/{dispatchId}": {
+      "schema": "DispatchQueueItem",
+      "description": "Real-time on-demand emergency triage matching queue"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "EscrowTransaction",
+      "description": "Financial ledger for escrow holds, session billing settlements, and payouts"
+    },
+    "/dictionary/{signId}": {
+      "schema": "SignDictionaryItem",
+      "description": "Global multi-dialect sign language dictionary and gesture definitions"
+    }
+  }
+}

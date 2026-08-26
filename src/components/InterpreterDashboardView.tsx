@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Briefcase, 
   DollarSign, 
@@ -10,12 +10,17 @@ import {
   UserCheck, 
   TrendingUp, 
   Calendar, 
-  CheckCircle, 
+  CheckCircle2, 
   AlertCircle,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  ArrowUpRight,
+  Zap,
+  Activity,
+  Layers
 } from 'lucide-react';
 import { UserProfile, AppSettings } from '../types';
+import { api } from '../utils/api';
 
 interface InterpreterDashboardViewProps {
   user: UserProfile;
@@ -30,8 +35,11 @@ export const InterpreterDashboardView: React.FC<InterpreterDashboardViewProps> =
 }) => {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [incomingCall, setIncomingCall] = useState<boolean>(true);
+  const [incomingCountdown, setIncomingCountdown] = useState<number>(28);
+  const [payoutSuccess, setPayoutSuccess] = useState<boolean>(false);
 
   const earningsData = {
+    availableBalance: 420.50,
     today: 214.50,
     thisWeek: 1280.00,
     thisMonth: 4850.00,
@@ -45,7 +53,7 @@ export const InterpreterDashboardView: React.FC<InterpreterDashboardViewProps> =
       clientName: 'Stanford Hospital Emergency Room',
       language: 'ASL',
       type: 'Urgent Medical Triage',
-      timeRequested: '1 min ago',
+      timeRequested: 'Just now',
       rate: '$75.00/hr'
     },
     {
@@ -55,8 +63,44 @@ export const InterpreterDashboardView: React.FC<InterpreterDashboardViewProps> =
       type: 'Biology 101 Lecture',
       timeRequested: 'Scheduled 03:00 PM',
       rate: '$65.00/hr'
+    },
+    {
+      id: 'req-03',
+      clientName: 'District Court Civil Hearing',
+      language: 'ASL',
+      type: 'Legal Proceedings',
+      timeRequested: 'Scheduled Tomorrow',
+      rate: '$90.00/hr'
     }
   ];
+
+  // Incoming Call Countdown
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (incomingCall && incomingCountdown > 0) {
+      timer = setInterval(() => {
+        setIncomingCountdown(prev => {
+          if (prev <= 1) {
+            setIncomingCall(false);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [incomingCall, incomingCountdown]);
+
+  const handleToggleOnline = async () => {
+    const next = !isOnline;
+    setIsOnline(next);
+    await api.updateInterpreterStatus(user.id, next ? 'online' : 'offline');
+  };
+
+  const handleRequestPayout = () => {
+    setPayoutSuccess(true);
+    setTimeout(() => setPayoutSuccess(false), 4000);
+  };
 
   return (
     <div className="space-y-6">
@@ -79,13 +123,13 @@ export const InterpreterDashboardView: React.FC<InterpreterDashboardViewProps> =
               <h1 className="text-xl font-bold text-slate-900 dark:text-white">
                 {user.name}
               </h1>
-              <span className="px-2 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-xs font-bold flex items-center space-x-1">
+              <span className="px-2.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-xs font-bold flex items-center space-x-1">
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>RID Certified Master</span>
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Available for ASL • BSL • International Sign
+              Certified Interpreter • ASL • BSL • International Sign
             </p>
           </div>
         </div>
@@ -100,153 +144,219 @@ export const InterpreterDashboardView: React.FC<InterpreterDashboardViewProps> =
               {isOnline ? 'Receiving incoming on-demand queue' : 'You will not receive live incoming alerts'}
             </span>
           </div>
+
           <button
-            onClick={() => setIsOnline(!isOnline)}
-            className="p-1 text-indigo-600 dark:text-indigo-400"
+            onClick={handleToggleOnline}
+            className={`p-2 rounded-xl transition-all ${
+              isOnline 
+                ? 'bg-emerald-500 text-white shadow-xs' 
+                : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+            }`}
           >
-            {isOnline ? <ToggleRight className="w-9 h-9" /> : <ToggleLeft className="w-9 h-9 text-slate-400" />}
+            {isOnline ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
           </button>
         </div>
       </div>
 
-      {/* Live Incoming Alert (If active and online) */}
+      {/* Incoming Urgent Call Alert Card (If Active & Online) */}
       {isOnline && incomingCall && (
-        <div className="p-5 bg-gradient-to-r from-indigo-900 via-purple-900 to-indigo-950 rounded-3xl text-white border-2 border-indigo-400 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in duration-300">
+        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-6 rounded-3xl text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
           <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/30 border border-emerald-400 flex items-center justify-center text-emerald-300 animate-pulse">
-              <PhoneIncoming className="w-6 h-6" />
+            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 animate-bounce">
+              <PhoneIncoming className="w-7 h-7 text-white" />
             </div>
             <div>
-              <span className="px-2 py-0.5 rounded bg-rose-500 text-[10px] font-bold uppercase tracking-wider text-white">
-                Incoming On-Demand Request
-              </span>
-              <h3 className="text-base font-bold mt-1">
-                Emergency Room Intake Consultation (ASL)
-              </h3>
-              <p className="text-xs text-indigo-200">
-                Memorial Health Center • 2-Way Video • Estimated: 20-30 min
+              <div className="flex items-center space-x-2">
+                <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider">
+                  ⚡ Urgent On-Demand Match
+                </span>
+                <span className="text-xs font-mono font-bold bg-black/30 px-2 py-0.5 rounded-full">
+                  Auto-Cascade in {incomingCountdown}s
+                </span>
+              </div>
+              <h2 className="text-lg font-bold mt-1">Stanford Hospital Emergency Room</h2>
+              <p className="text-xs text-emerald-100">
+                Medical Triage • ASL Required • Guaranteed Rate: $75.00/hr ($1.25/min)
               </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+          <div className="flex items-center space-x-3 self-end md:self-center">
             <button
               onClick={() => setIncomingCall(false)}
-              className="px-4 py-2.5 rounded-xl border border-slate-600 text-xs font-bold hover:bg-slate-800 transition-colors"
+              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors"
             >
               Decline
             </button>
             <button
-              onClick={onAcceptIncomingCall}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-extrabold text-xs flex items-center space-x-1.5 shadow-lg shadow-emerald-500/30 transition-all"
+              onClick={() => {
+                setIncomingCall(false);
+                onAcceptIncomingCall();
+              }}
+              className="px-6 py-2.5 rounded-xl bg-white text-emerald-700 hover:bg-slate-100 text-xs font-extrabold shadow-lg transition-all active:scale-95 flex items-center space-x-1.5"
             >
               <Video className="w-4 h-4" />
-              <span>Accept & Join Call</span>
+              <span>Accept & Join Room</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Analytics & Earnings Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* KPI Stats Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Available Escrow Balance */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Today's Earnings</span>
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
+            <span>Available Balance</span>
             <DollarSign className="w-4 h-4 text-emerald-500" />
           </div>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white">
+          <div className="text-2xl font-black text-slate-900 dark:text-white">
+            ${earningsData.availableBalance.toFixed(2)}
+          </div>
+          <button
+            onClick={handleRequestPayout}
+            className="mt-3 w-full py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-colors flex items-center justify-center space-x-1"
+          >
+            <span>{payoutSuccess ? 'Payout Sent to Stripe!' : 'Instant Payout'}</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Today's Earnings */}
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
+            <span>Earned Today</span>
+            <TrendingUp className="w-4 h-4 text-indigo-500" />
+          </div>
+          <div className="text-2xl font-black text-slate-900 dark:text-white">
             ${earningsData.today.toFixed(2)}
-          </p>
-          <span className="text-[11px] text-emerald-500 font-semibold mt-1 block">
+          </div>
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium block mt-3">
             +18% from yesterday
           </span>
         </div>
 
+        {/* Interpreted Hours */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">This Month</span>
-            <TrendingUp className="w-4 h-4 text-indigo-500" />
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
+            <span>Live Hours</span>
+            <Clock className="w-4 h-4 text-purple-500" />
           </div>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white">
-            ${earningsData.thisMonth.toFixed(2)}
-          </p>
-          <span className="text-[11px] text-slate-400 mt-1 block">
-            {earningsData.completedHours} billable hours
+          <div className="text-2xl font-black text-slate-900 dark:text-white">
+            {earningsData.completedHours}h
+          </div>
+          <span className="text-[11px] text-slate-500 block mt-3">
+            Across 14 appointments
           </span>
         </div>
 
+        {/* Client Rating */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Client Rating</span>
-            <Star className="w-4 h-4 text-amber-400 fill-current" />
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
+            <span>Satisfaction</span>
+            <Star className="w-4 h-4 text-amber-500" />
           </div>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white">
+          <div className="text-2xl font-black text-slate-900 dark:text-white">
             {earningsData.clientSatisfaction} / 5.0
-          </p>
-          <span className="text-[11px] text-slate-400 mt-1 block">
-            From 184 verified sessions
+          </div>
+          <span className="text-[11px] text-amber-500 font-bold block mt-3">
+            ⭐ 148 Verified 5-Star Reviews
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Platform Status</span>
-            <CheckCircle className="w-4 h-4 text-purple-500" />
-          </div>
-          <p className="text-xl font-bold text-slate-900 dark:text-white">
-            Tier 1 Verified Pro
-          </p>
-          <span className="text-[11px] text-purple-500 font-semibold mt-1 block">
-            Auto-payout enabled
-          </span>
-        </div>
       </div>
 
-      {/* Scheduled Queue & Upcoming Shifts */}
-      <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-            <Calendar className="w-4 h-4 text-indigo-500" />
-            <span>Today's Confirmed Interpretation Sessions</span>
-          </h2>
-          <span className="text-xs text-slate-500">2 bookings today</span>
-        </div>
-
-        <div className="space-y-3">
-          {queueRequests.map((req) => (
-            <div
-              key={req.id}
-              className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/70 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-            >
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-bold text-sm text-slate-900 dark:text-white">
-                    {req.clientName}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
-                    {req.language}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {req.type} • {req.timeRequested}
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-3">
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                  {req.rate}
-                </span>
-                <button
-                  onClick={onAcceptIncomingCall}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center space-x-1 transition-colors"
-                >
-                  <Video className="w-3.5 h-3.5" />
-                  <span>Join Session</span>
-                </button>
-              </div>
+      {/* Main Content: Dispatch Queue & Schedule */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Urgent Dispatch Requests Queue */}
+        <div className="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
+            <div>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                Urgent Queue & Upcoming Appointments
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Live dispatches assigned to your certified language pool
+              </p>
             </div>
-          ))}
+            <span className="px-2.5 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+              3 In Queue
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {queueRequests.map((req) => (
+              <div
+                key={req.id}
+                className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-500/50 transition-colors"
+              >
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                      {req.clientName}
+                    </h4>
+                    <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
+                      {req.language}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    <span>{req.type}</span>
+                    <span>•</span>
+                    <span>{req.timeRequested}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-3 self-end sm:self-center">
+                  <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
+                    {req.rate}
+                  </span>
+                  <button
+                    onClick={onAcceptIncomingCall}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-xs"
+                  >
+                    Open Room
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+
+        {/* Right Sidebar: Certifications & Account Compliance */}
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs space-y-4">
+          <h3 className="font-bold text-base text-slate-900 dark:text-white">
+            Professional Accreditations
+          </h3>
+
+          <div className="space-y-3 text-xs">
+            <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <div className="flex items-center space-x-1.5 font-bold text-indigo-600 dark:text-indigo-400">
+                <ShieldCheck className="w-4 h-4" />
+                <span>RID Master Certificate</span>
+              </div>
+              <p className="text-slate-500">Registry of Interpreters for the Deaf • Verified</p>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <div className="flex items-center space-x-1.5 font-bold text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>HIPAA Medical Interpreter Certified</span>
+              </div>
+              <p className="text-slate-500">Certified Healthcare Interpreter (CHI) • Active</p>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <div className="flex items-center space-x-1.5 font-bold text-purple-600 dark:text-purple-400">
+                <Zap className="w-4 h-4" />
+                <span>Courtroom Legal Certified (SC:L)</span>
+              </div>
+              <p className="text-slate-500">Specialist Certificate: Legal • Verified</p>
+            </div>
+          </div>
+        </div>
+
       </div>
 
     </div>

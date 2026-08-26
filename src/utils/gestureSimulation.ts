@@ -1,4 +1,12 @@
 // Hand landmarks & AI spatial recognition drawing utilities
+// =========================================================================================
+// [CUSTOM INTEGRATION POINT: ML Hand Tracking Engine]
+// If you want to connect a real machine learning hand landmark detector:
+// 1. Install/Import MediaPipe Hands (@mediapipe/hands) or TensorFlow.js (@tensorflow-models/hand-pose-detection)
+// 2. Stream video frames from navigator.mediaDevices.getUserMedia()
+// 3. Map the 21 3D joint coordinates (wrist, thumb, index, middle, ring, pinky) to LandmarkPoint[]
+// 4. Pass the resulting array directly to drawHandSkeleton() below.
+// =========================================================================================
 
 export interface LandmarkPoint {
   x: number;

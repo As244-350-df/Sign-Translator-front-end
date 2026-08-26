@@ -1,0 +1,190 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // ----------------------------------------------------
+    // User Profiles & Private Subcollections
+    // ----------------------------------------------------
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.role in ['user_deaf', 'user_hearing', 'interpreter', 'admin']
+        && data.primaryLanguage in ['ASL', 'BSL', 'Auslan', 'LSF', 'DGS', 'IS']
+        && data.availableStatus in ['online', 'busy', 'offline'];
+    }
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidUserProfile(incoming())
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'avatar', 'primaryLanguage', 'secondaryLanguage', 'bio', 'availableStatus', 'updatedAt', 'rating', 'totalHours', 'certifications', 'hourlyRate']);
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // Private Settings & PII Isolation
+      match /private/{settingId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+
+      // User In-App Notifications
+      match /notifications/{notificationId} {
+        allow read, update, delete: if isOwner(userId);
+        allow create: if isSignedIn();
+      }
+    }
+
+    // ----------------------------------------------------
+    // Certified Interpreters Marketplace Directory
+    // ----------------------------------------------------
+    function isValidInterpreterProfile(data) {
+      return data.interpreterId is string && data.interpreterId == request.auth.uid
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.title is string && data.title.size() <= 100
+        && data.ratePerHour is number && data.ratePerHour >= 0
+        && data.availableStatus in ['online', 'busy', 'offline'];
+    }
+
+    match /interpreters/{interpreterId} {
+      allow get, list: if true; // Public marketplace discoverability
+      allow create: if isOwner(interpreterId) && isValidInterpreterProfile(incoming());
+      allow update: if (isOwner(interpreterId) || isAdmin())
+        && isValidInterpreterProfile(incoming())
+        && incoming().interpreterId == existing().interpreterId
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['availableStatus', 'ratePerHour', 'ratePerMinute', 'bio', 'specialties', 'languages', 'spokenLanguages', 'avatar', 'coverImage', 'title'])
+          || isAdmin()
+        );
+      allow delete: if isOwner(interpreterId) || isAdmin();
+
+      // Interpreter Reviews
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow create: if isSignedIn()
+          && incoming().reviewerUserId == request.auth.uid
+          && incoming().rating is number && incoming().rating >= 1 && incoming().rating <= 5;
+        allow update, delete: if isSignedIn() && existing().reviewerUserId == request.auth.uid;
+      }
+    }
+
+    // ----------------------------------------------------
+    // Live Sessions, AI Translations & Bookings
+    // ----------------------------------------------------
+    function isValidSession(data) {
+      return data.sessionId is string && data.sessionId.size() <= 128
+        && data.type in ['on_demand_dispatch', 'scheduled_booking', 'ai_translation']
+        && data.userId is string
+        && data.language in ['ASL', 'BSL', 'Auslan', 'LSF', 'DGS', 'IS']
+        && data.status in ['pending', 'matched', 'in_progress', 'completed', 'cancelled'];
+    }
+
+    function isSessionParticipant(sessionData) {
+      return isSignedIn() && (
+        sessionData.userId == request.auth.uid ||
+        (sessionData.interpreterId != null && sessionData.interpreterId == request.auth.uid) ||
+        isAdmin()
+      );
+    }
+
+    match /sessions/{sessionId} {
+      allow get: if isSessionParticipant(existing());
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.interpreterId == request.auth.uid || 
+        isAdmin()
+      );
+      allow create: if isSignedIn() 
+        && isValidSession(incoming())
+        && incoming().userId == request.auth.uid;
+      allow update: if isSessionParticipant(existing())
+        && isValidSession(incoming())
+        && incoming().sessionId == existing().sessionId
+        && incoming().userId == existing().userId
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'interpreterId', 'interpreterName', 'startedAt', 'endedAt', 
+          'durationMinutes', 'totalCost', 'payoutStatus', 'summary', 'keyTerms', 
+          'notes', 'complianceHash', 'meetingRoomId'
+        ]);
+      allow delete: if isAdmin() || (isOwner(existing().userId) && existing().status == 'cancelled');
+
+      // Diarized Live Transcripts Subcollection
+      match /transcript/{entryId} {
+        allow read: if isSessionParticipant(get(/databases/$(database)/documents/sessions/$(sessionId)).data);
+        allow create: if isSessionParticipant(get(/databases/$(database)/documents/sessions/$(sessionId)).data)
+          && incoming().speaker in ['Signer', 'Speaker', 'Interpreter', 'AI']
+          && incoming().text is string && incoming().text.size() <= 2000;
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ----------------------------------------------------
+    // Real-Time On-Demand Dispatch Queue
+    // ----------------------------------------------------
+    match /dispatchQueue/{dispatchId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && incoming().userId == request.auth.uid
+        && incoming().urgency in ['urgent', 'normal', 'emergency']
+        && incoming().status in ['searching', 'offered', 'accepted', 'expired', 'cancelled'];
+      allow update: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'offeredToInterpreterId', 'offerExpiresAt', 'sessionId'])
+      );
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // ----------------------------------------------------
+    // Escrow & Financial Ledger Transactions
+    // ----------------------------------------------------
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (
+        existing().payerUserId == request.auth.uid || 
+        existing().payeeInterpreterId == request.auth.uid || 
+        isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.payerUserId == request.auth.uid || 
+        resource.data.payeeInterpreterId == request.auth.uid || 
+        isAdmin()
+      );
+      allow create, update, delete: if isAdmin(); // Financial ledger controlled strictly by secure backend webhooks/Cloud Functions
+    }
+
+    // ----------------------------------------------------
+    // Global Multi-Dialect Sign Dictionary
+    // ----------------------------------------------------
+    match /dictionary/{signId} {
+      allow read: if true; // Public sign search & learning
+      allow create, update, delete: if isAdmin(); // Curated vocabulary maintained by clinical linguists/admins
+    }
+  }
+}

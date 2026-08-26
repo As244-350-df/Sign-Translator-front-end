@@ -1,19 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
   Video, 
   Plus, 
-  MapPin, 
+  Trash2,
   CheckCircle2, 
   XCircle, 
-  FileText, 
-  DollarSign,
-  ChevronRight,
-  ShieldCheck
+  RotateCw,
+  Sparkles
 } from 'lucide-react';
 import { Booking, AppSettings } from '../types';
-import { MOCK_BOOKINGS, MOCK_INTERPRETERS } from '../data/mockData';
+import { api } from '../utils/api';
 
 interface ScheduleViewProps {
   settings: AppSettings;
@@ -26,8 +24,35 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   onJoinCall,
   onOpenDirectory,
 }) => {
-  const [bookings, setBookings] = useState<Booking[]>(MOCK_BOOKINGS);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
   const [activeFilter, setActiveFilter] = useState<'all' | 'upcoming' | 'completed'>('upcoming');
+
+  const fetchBookings = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getBookings();
+      setBookings(data);
+    } catch (err) {
+      console.error('Error loading bookings:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBookings();
+  }, []);
+
+  const handleCancelBooking = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm('Are you sure you want to cancel this booking?')) {
+      const ok = await api.cancelBooking(id);
+      if (ok) {
+        setBookings(prev => prev.filter(b => b.id !== id));
+      }
+    }
+  };
 
   const filteredBookings = bookings.filter((b) => {
     if (activeFilter === 'upcoming') return b.status === 'upcoming' || b.status === 'in_progress';
@@ -54,14 +79,25 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           </p>
         </div>
 
-        {/* Book New Session Button */}
-        <button
-          onClick={onOpenDirectory}
-          className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-2 shadow-md shadow-indigo-500/25 transition-all self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Book New Interpreter</span>
-        </button>
+        {/* Action Buttons */}
+        <div className="flex items-center space-x-2 self-start sm:self-auto">
+          <button
+            onClick={fetchBookings}
+            disabled={loading}
+            title="Refresh bookings from server"
+            className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all"
+          >
+            <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          
+          <button
+            onClick={onOpenDirectory}
+            className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-2 shadow-md shadow-indigo-500/25 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Book New Interpreter</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs */}
@@ -135,6 +171,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
                 {/* Action Buttons */}
                 <div className="flex items-center space-x-2 self-end md:self-center">
+                  <button
+                    onClick={(e) => handleCancelBooking(b.id, e)}
+                    title="Cancel Booking"
+                    className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+
                   {b.status === 'upcoming' && (
                     <button
                       onClick={() => onJoinCall(b.interpreterId)}

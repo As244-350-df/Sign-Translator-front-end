@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   History, 
   Search, 
@@ -10,10 +10,11 @@ import {
   Camera, 
   Video, 
   ChevronRight,
+  RotateCw,
   Sparkles
 } from 'lucide-react';
 import { SessionHistoryItem, AppSettings } from '../types';
-import { MOCK_SESSION_HISTORY } from '../data/mockData';
+import { api } from '../utils/api';
 
 interface SessionHistoryViewProps {
   settings: AppSettings;
@@ -24,10 +25,28 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
   settings,
   onSelectSession,
 }) => {
+  const [sessions, setSessions] = useState<SessionHistoryItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'ai_translation' | 'interpreter_call'>('all');
 
-  const filteredHistory = MOCK_SESSION_HISTORY.filter((item) => {
+  const fetchSessions = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getSessions();
+      setSessions(data);
+    } catch (err) {
+      console.error('Error fetching sessions:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  const filteredHistory = sessions.filter((item) => {
     const matchesSearch = 
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -38,6 +57,17 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
 
     return matchesSearch && matchesType;
   });
+
+  const exportAllTranscripts = () => {
+    const jsonStr = JSON.stringify(sessions, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `signlink-transcripts-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-6">
@@ -50,12 +80,30 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
               Session History & Transcripts
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
-              {MOCK_SESSION_HISTORY.length} Archived
+              {sessions.length} Archived
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             Access, download, and review full conversational transcripts from your AI live translations and interpreter video calls.
           </p>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={fetchSessions}
+            title="Refresh history"
+            className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all"
+          >
+            <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          
+          <button
+            onClick={exportAllTranscripts}
+            className="px-4 py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center space-x-2 transition-all"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export JSON</span>
+          </button>
         </div>
       </div>
 
@@ -102,101 +150,106 @@ export const SessionHistoryView: React.FC<SessionHistoryViewProps> = ({
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
             }`}
           >
-            Human Video
+            Interpreter Calls
           </button>
         </div>
       </div>
 
-      {/* History List Cards */}
+      {/* History Items List */}
       <div className="space-y-4">
-        {filteredHistory.map((item) => {
-          const isHumanCall = item.type === 'interpreter_call';
+        {filteredHistory.length > 0 ? (
+          filteredHistory.map((item) => {
+            const isAI = item.type === 'ai_translation';
 
-          return (
-            <div
-              key={item.id}
-              onClick={() => onSelectSession(item)}
-              className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs hover:shadow-xl transition-all duration-200 cursor-pointer group flex flex-col md:flex-row md:items-center justify-between gap-4"
-            >
-              <div className="flex items-start space-x-4">
-                {/* Icon or Avatar */}
-                {isHumanCall && item.interpreterAvatar ? (
-                  <img
-                    src={item.interpreterAvatar}
-                    alt={item.interpreterName || 'Interpreter'}
-                    className="w-12 h-12 rounded-2xl object-cover ring-2 ring-indigo-500/30 shrink-0"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
-                    <Camera className="w-6 h-6" />
-                  </div>
-                )}
-
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="font-bold text-base text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                      {item.title}
-                    </h3>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      isHumanCall
-                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300'
-                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+            return (
+              <div
+                key={item.id}
+                onClick={() => onSelectSession(item)}
+                className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs hover:shadow-lg transition-all cursor-pointer group"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  
+                  {/* Left Icon & Details */}
+                  <div className="flex items-start space-x-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                      isAI 
+                        ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400' 
+                        : 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400'
                     }`}>
-                      {isHumanCall ? 'Live Call' : 'AI Translation'}
-                    </span>
-                  </div>
+                      {isAI ? <Camera className="w-6 h-6" /> : <Video className="w-6 h-6" />}
+                    </div>
 
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-                    <span>{item.date}</span>
-                    <span>•</span>
-                    <span>Duration: {item.duration}</span>
-                    <span>•</span>
-                    <span>Dialect: {item.language}</span>
-                    {item.rating && (
-                      <>
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-bold text-base text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                          {item.title}
+                        </h3>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          isAI 
+                            ? 'bg-purple-50 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' 
+                            : 'bg-indigo-50 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300'
+                        }`}>
+                          {isAI ? 'AI Detection' : `Interpreter: ${item.interpreterName?.split(',')[0] || 'Live Pro'}`}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        <span className="flex items-center space-x-1">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{item.date}</span>
+                        </span>
                         <span>•</span>
-                        <div className="flex items-center text-amber-400">
-                          <Star className="w-3 h-3 fill-current" />
-                          <span className="ml-1 text-slate-700 dark:text-slate-300">{item.rating}.0</span>
-                        </div>
-                      </>
-                    )}
+                        <span className="flex items-center space-x-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{item.duration}</span>
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center space-x-1">
+                          <FileText className="w-3.5 h-3.5 text-slate-400" />
+                          <span>{item.fullTranscript.length} Dialogue Turns</span>
+                        </span>
+                      </div>
+
+                      {/* Summary Quote */}
+                      <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 mt-2 leading-relaxed">
+                        {item.summary}
+                      </p>
+
+                      {/* Key Terms */}
+                      <div className="flex flex-wrap gap-1.5 pt-2">
+                        {item.keyTerms.map((term, i) => (
+                          <span
+                            key={i}
+                            className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-600 dark:text-slate-300"
+                          >
+                            #{term}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 leading-relaxed line-clamp-2">
-                    {item.summary}
-                  </p>
-
-                  {/* Key Term Chips */}
-                  <div className="flex flex-wrap gap-1.5 mt-3">
-                    {item.keyTerms.map((term, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-900/80 text-slate-600 dark:text-slate-400 text-[10px] font-medium border border-slate-200/60 dark:border-slate-800"
-                      >
-                        #{term}
-                      </span>
-                    ))}
+                  {/* Right Arrow Action */}
+                  <div className="flex items-center space-x-3 self-end md:self-center shrink-0">
+                    <button className="px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-700/60 group-hover:bg-indigo-600 group-hover:text-white text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center space-x-1 transition-all">
+                      <span>View Full Transcript</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
+
                 </div>
               </div>
-
-              {/* Right CTA */}
-              <div className="flex items-center space-x-2 self-end md:self-center">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelectSession(item);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold flex items-center space-x-1 hover:bg-indigo-100 transition-colors"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>View Transcript</span>
-                </button>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        ) : (
+          <div className="bg-white dark:bg-slate-800 p-12 rounded-3xl border border-slate-200 dark:border-slate-700 text-center">
+            <History className="w-12 h-12 text-slate-400 mx-auto mb-3" />
+            <h3 className="font-bold text-base text-slate-800 dark:text-slate-200">No session history found</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+              Completed AI live translations and interpreter video calls will automatically save their full encrypted transcripts here.
+            </p>
+          </div>
+        )}
       </div>
 
     </div>
