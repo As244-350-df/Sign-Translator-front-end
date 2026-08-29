@@ -1,4 +1,4 @@
-// Real-time In-Browser Video & Audio MediaRecorder Engine
+// Real-time In-Browser Video & Audio MediaRecorder Engine with Live Compositor
 
 export interface RecordedVideoResult {
   blob: Blob;
@@ -17,6 +17,11 @@ export class LiveSessionRecorder {
   private isRecordingState: boolean = false;
   private onDurationUpdate?: (durationSec: number) => void;
 
+  // Composite Recording Canvas
+  private compositeCanvas: HTMLCanvasElement | null = null;
+  private compositeCtx: CanvasRenderingContext2D | null = null;
+  private animFrameId: number | null = null;
+
   public isRecording(): boolean {
     return this.isRecordingState;
   }
@@ -25,9 +30,10 @@ export class LiveSessionRecorder {
     return this.currentDuration;
   }
 
-  // Start recording from a canvas and optional audio stream
+  // Start recording from a canvas and optional video element & audio stream
   public async startRecording(
     canvas: HTMLCanvasElement,
+    videoElement?: HTMLVideoElement | null,
     audioStream?: MediaStream | null,
     onDuration?: (seconds: number) => void
   ): Promise<boolean> {
@@ -36,38 +42,123 @@ export class LiveSessionRecorder {
     this.currentDuration = 0;
 
     try {
-      // 1. Capture stream from canvas at 30/60 fps
-      const canvasStream = canvas.captureStream(30);
+      // 1. Set up high-definition composite canvas (1280x720) to prevent dark/transparent video output
+      if (!this.compositeCanvas) {
+        this.compositeCanvas = document.createElement('canvas');
+        this.compositeCanvas.width = 1280;
+        this.compositeCanvas.height = 720;
+      }
+      this.compositeCtx = this.compositeCanvas.getContext('2d', { alpha: false });
 
-      // 2. Combine video track with audio track if available
-      const combinedTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+      const compCanvas = this.compositeCanvas;
+      const compCtx = this.compositeCtx;
+
+      // 2. Start continuous compositing loop to blend live video feed + tracking mesh
+      const renderComposite = () => {
+        if (!this.isRecordingState || !compCtx) return;
+
+        const cw = compCanvas.width;
+        const ch = compCanvas.height;
+
+        // Background Layer: Real Video Feed or Simulated Cyber Environment
+        if (videoElement && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+          compCtx.save();
+          // Mirror selfie camera horizontally
+          compCtx.translate(cw, 0);
+          compCtx.scale(-1, 1);
+          compCtx.drawImage(videoElement, 0, 0, cw, ch);
+          compCtx.restore();
+        } else {
+          // Elegant dark studio background with subtle tech grid
+          const grad = compCtx.createLinearGradient(0, 0, cw, ch);
+          grad.addColorStop(0, '#090D16');
+          grad.addColorStop(0.5, '#131B2E');
+          grad.addColorStop(1, '#090D16');
+          compCtx.fillStyle = grad;
+          compCtx.fillRect(0, 0, cw, ch);
+
+          // Tech grid lines
+          compCtx.strokeStyle = 'rgba(99, 102, 241, 0.12)';
+          compCtx.lineWidth = 1;
+          for (let x = 0; x < cw; x += 80) {
+            compCtx.beginPath();
+            compCtx.moveTo(x, 0);
+            compCtx.lineTo(x, ch);
+            compCtx.stroke();
+          }
+          for (let y = 0; y < ch; y += 80) {
+            compCtx.beginPath();
+            compCtx.moveTo(0, y);
+            compCtx.lineTo(cw, y);
+            compCtx.stroke();
+          }
+        }
+
+        // Foreground Layer: 21-point Skeleton Landmark Mesh & HUD Canvas
+        if (canvas && canvas.width > 0 && canvas.height > 0) {
+          compCtx.drawImage(canvas, 0, 0, cw, ch);
+        }
+
+        // Live Session Watermark Badge
+        compCtx.save();
+        compCtx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        compCtx.beginPath();
+        compCtx.roundRect(20, 20, 164, 30, 8);
+        compCtx.fill();
+        compCtx.strokeStyle = 'rgba(244, 63, 94, 0.4)';
+        compCtx.lineWidth = 1;
+        compCtx.stroke();
+
+        // Pulsing red dot
+        compCtx.fillStyle = '#F43F5E';
+        compCtx.beginPath();
+        compCtx.arc(36, 35, 5, 0, Math.PI * 2);
+        compCtx.fill();
+
+        compCtx.fillStyle = '#FFFFFF';
+        compCtx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+        compCtx.fillText('SIGNLINK • REC', 48, 39);
+        compCtx.restore();
+
+        this.animFrameId = requestAnimationFrame(renderComposite);
+      };
+
+      // Draw initial frame immediately
+      renderComposite();
+
+      // 3. Capture stream from the composited canvas at 30 fps
+      const compositeStream = compCanvas.captureStream(30);
+
+      // 4. Combine video track with active audio track if available
+      const combinedTracks: MediaStreamTrack[] = [...compositeStream.getVideoTracks()];
 
       if (audioStream) {
-        audioStream.getAudioTracks().forEach(track => combinedTracks.push(track));
-      } else {
-        // Attempt to get user audio if available
-        try {
-          const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mic.getAudioTracks().forEach(track => combinedTracks.push(track));
-        } catch {
-          // Continue with video-only if mic not granted
+        const audioTracks = audioStream.getAudioTracks();
+        if (audioTracks.length > 0 && audioTracks[0].readyState === 'live') {
+          combinedTracks.push(audioTracks[0]);
         }
       }
 
       const combinedStream = new MediaStream(combinedTracks);
 
-      // 3. Determine best supported mime type
+      // 5. Determine best supported mime type
       const mimeTypes = [
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm',
         'video/mp4'
       ];
-      const selectedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+      const selectedMimeType = mimeTypes.find(type => {
+        try {
+          return MediaRecorder.isTypeSupported(type);
+        } catch {
+          return false;
+        }
+      }) || 'video/webm';
 
       this.mediaRecorder = new MediaRecorder(combinedStream, {
         mimeType: selectedMimeType,
-        videoBitsPerSecond: 2500000 // 2.5 Mbps crisp video
+        videoBitsPerSecond: 2500000 // 2.5 Mbps high fidelity video
       });
 
       this.mediaRecorder.ondataavailable = (event) => {
@@ -76,7 +167,7 @@ export class LiveSessionRecorder {
         }
       };
 
-      this.mediaRecorder.start(1000); // chunk every 1 second
+      this.mediaRecorder.start(1000); // Record in 1 second chunks
       this.isRecordingState = true;
       this.startTime = Date.now();
 
@@ -89,18 +180,28 @@ export class LiveSessionRecorder {
 
       return true;
     } catch (err) {
-      console.error('Failed to initialize MediaRecorder:', err);
+      console.error('[LiveSessionRecorder] Failed to start recording session:', err);
+      if (this.animFrameId) {
+        cancelAnimationFrame(this.animFrameId);
+        this.animFrameId = null;
+      }
+      this.isRecordingState = false;
       return false;
     }
   }
 
-  // Stop recording and return final video Blob and metadata
+  // Stop recording and produce playback blob
   public async stopRecording(): Promise<RecordedVideoResult | null> {
     if (!this.mediaRecorder || !this.isRecordingState) return null;
 
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
+    }
+
+    if (this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
     }
 
     return new Promise((resolve) => {
@@ -126,7 +227,12 @@ export class LiveSessionRecorder {
         });
       };
 
-      this.mediaRecorder.stop();
+      try {
+        this.mediaRecorder.stop();
+      } catch (err) {
+        console.warn('[LiveSessionRecorder] Error stopping MediaRecorder:', err);
+        resolve(null);
+      }
     });
   }
 

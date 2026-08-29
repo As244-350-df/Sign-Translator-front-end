@@ -129,6 +129,18 @@ export interface AppNotification {
   actionUrl?: string;
 }
 
+export interface HandPhysicsConfig {
+  enabled: boolean;
+  preset: 'biological' | 'snappy' | 'fluid' | 'precision';
+  stiffness: number;       // 0.2 to 2.5 (spring stiffness k)
+  damping: number;         // 0.2 to 1.0 (damping ratio zeta)
+  tendonCoupling: number;  // 0.0 to 1.0 (inter-finger biomechanical coupling)
+  massInertia: number;     // 0.1 to 1.0 (joint bone mass & inertia)
+  softCollision: boolean;  // Prevents finger self-intersection
+  volumetric3D: boolean;   // 3D depth & perspective foreshortening
+  oneEuroFilter: boolean;  // Velocity-adaptive jitter damper
+}
+
 export interface AppSettings {
   primarySignLanguage: SignLanguageCode;
   autoSpeakTranslation: boolean;
@@ -142,4 +154,6 @@ export interface AppSettings {
   darkTheme: boolean;
   detectionSensitivity: 'high' | 'balanced' | 'low';
   gestureTrackingOverlay: boolean;
+  autoCenterCamera?: boolean;
+  handPhysics?: HandPhysicsConfig;
 }

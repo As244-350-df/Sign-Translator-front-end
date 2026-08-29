@@ -40,7 +40,8 @@ import {
   ZoomIn,
   ZoomOut,
   Target,
-  Focus
+  Focus,
+  Crosshair
 } from 'lucide-react';
 import { Interpreter, AppSettings } from '../types';
 import { MOCK_INTERPRETERS } from '../data/mockData';
@@ -106,6 +107,8 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
   const [showLandmarkOverlay, setShowLandmarkOverlay] = useState<boolean>(true);
   const [showAlignmentGuide, setShowAlignmentGuide] = useState<boolean>(false);
   const [cameraZoom, setCameraZoom] = useState<number>(1.0);
+  const [cameraPan, setCameraPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isAutoCentering, setIsAutoCentering] = useState<boolean>(settings.autoCenterCamera ?? false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordedDuration, setRecordedDuration] = useState<number>(0);
   const [activeRecordingResult, setActiveRecordingResult] = useState<RecordedVideoResult | null>(null);
@@ -119,14 +122,32 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
     isReal: false
   });
 
+  // Sync auto-center to hand tracker
+  useEffect(() => {
+    handTrackerRef.current.setAutoCenter(isAutoCentering);
+  }, [isAutoCentering]);
+
   // Sync zoom to hand tracker
   useEffect(() => {
-    handTrackerRef.current.setZoom(cameraZoom, 0, 0);
-  }, [cameraZoom]);
+    if (!isAutoCentering) {
+      handTrackerRef.current.setZoom(cameraZoom, cameraPan.x, cameraPan.y);
+    }
+  }, [cameraZoom, cameraPan, isAutoCentering]);
+
+  const handleToggleAutoCenter = () => {
+    setIsAutoCentering(prev => {
+      const next = !prev;
+      handTrackerRef.current.setAutoCenter(next);
+      return next;
+    });
+  };
 
   const handleZoomIn = () => setCameraZoom(prev => Math.min(3.5, +(prev + 0.25).toFixed(2)));
   const handleZoomOut = () => setCameraZoom(prev => Math.max(1.0, +(prev - 0.25).toFixed(2)));
-  const handleResetZoom = () => setCameraZoom(1.0);
+  const handleResetZoom = () => {
+    setCameraZoom(1.0);
+    setCameraPan({ x: 0, y: 0 });
+  };
 
   // Metered Billing ($/min)
   const ratePerSecond = (interpreter.ratePerMinute || 1.25) / 60;
@@ -220,6 +241,14 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
 
       // Process real video frame / kinematics
       const detection: HandDetectionResult = tracker.processFrame(time);
+
+      if (detection.autoCentering && detection.autoCentering.enabled) {
+        setCameraZoom(detection.autoCentering.currentZoom);
+        setCameraPan({
+          x: detection.autoCentering.panOffsetX,
+          y: detection.autoCentering.panOffsetY
+        });
+      }
 
       setTfStatus({
         fps: detection.fps,
@@ -684,7 +713,7 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
                 muted
                 playsInline
                 style={{
-                  transform: `scaleX(-${cameraZoom}) scaleY(${cameraZoom})`,
+                  transform: `scaleX(-${cameraZoom}) scaleY(${cameraZoom}) translate(${cameraPan.x * 12}%, ${cameraPan.y * 12}%)`,
                   transformOrigin: 'center center'
                 }}
                 className="w-full h-full object-cover transition-transform duration-150 ease-out"
@@ -1053,11 +1082,21 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
             <span className="hidden sm:inline">AI Skeleton</span>
           </button>
 
-          {/* Camera Zoom In / Out Quick Controls */}
+          {/* Camera Zoom In / Out & Auto-Center Quick Controls */}
           <div className="flex items-center space-x-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
             <button
+              onClick={handleToggleAutoCenter}
+              className={`p-1 rounded text-[10px] font-bold flex items-center space-x-1 transition-colors ${
+                isAutoCentering ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Real-Time Hand Auto-Centering (Computer Vision)"
+            >
+              <Crosshair className="w-3 h-3" />
+              <span>Auto</span>
+            </button>
+            <button
               onClick={handleZoomOut}
-              disabled={cameraZoom <= 1.0}
+              disabled={cameraZoom <= 1.0 || isAutoCentering}
               className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30"
               title="Camera Zoom Out"
             >
@@ -1066,7 +1105,7 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
             <span className="text-[10px] font-mono text-indigo-400 font-bold px-1">{cameraZoom.toFixed(1)}x</span>
             <button
               onClick={handleZoomIn}
-              disabled={cameraZoom >= 3.5}
+              disabled={cameraZoom >= 3.5 || isAutoCentering}
               className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30"
               title="Camera Zoom In"
             >

@@ -44,6 +44,18 @@ export const INITIAL_SETTINGS: AppSettings = {
   darkTheme: false,
   detectionSensitivity: 'high',
   gestureTrackingOverlay: true,
+  autoCenterCamera: false,
+  handPhysics: {
+    enabled: true,
+    preset: 'biological',
+    stiffness: 1.15,
+    damping: 0.72,
+    tendonCoupling: 0.35,
+    massInertia: 0.40,
+    softCollision: true,
+    volumetric3D: true,
+    oneEuroFilter: true
+  }
 };
 
 export const SIGN_ALPHABET: SignGestureItem[] = [
