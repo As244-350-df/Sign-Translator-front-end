@@ -45,6 +45,7 @@ import {
   RefreshCw,
   ShieldAlert,
   VideoOff,
+  ExternalLink,
   X
 } from 'lucide-react';
 import { AppSettings, RecognizedSign, SignLanguageCode, SignGestureItem } from '../types';
@@ -88,6 +89,9 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
   // Mode: 'sign_to_text' (Camera AI Vision) | 'speech_to_sign' (Voice/Text to Sign Animation)
   const [translationMode, setTranslationMode] = useState<'sign_to_text' | 'speech_to_sign'>('sign_to_text');
   
+  // Environment context
+  const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
+
   // Camera & Tracking State
   const [isCameraActive, setIsCameraActive] = useState<boolean>(true);
   const [useRealWebcam, setUseRealWebcam] = useState<boolean>(true);
@@ -399,37 +403,23 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
     let isMounted = true;
     let fallbackCheckInterval: any = null;
     let slowLoadingTimer: any = null;
-    let autoFallbackTimeout: any = null;
     let safetyTrackTimeout: any = null;
 
     if (isCameraActive && useRealWebcam) {
       setCameraSlowLoading(false);
 
-      // Start slow loading watcher: after 3.8s, inform user they can switch to simulator or allow in prompt
+      // Start slow loading watcher: after 3.5s, inform user with recovery options if camera is slow or waiting for prompt
       slowLoadingTimer = setTimeout(() => {
         if (isMounted) {
           setCameraSlowLoading(true);
         }
-      }, 3800);
-
-      // Auto-fallback timeout: after 7.5s, if camera hasn't activated, switch smoothly to AI Simulator
-      autoFallbackTimeout = setTimeout(() => {
-        if (isMounted) {
-          console.warn('[LiveTranslateView] Camera initialization timed out. Auto-switching to AI Gesture Simulator.');
-          setUseRealWebcam(false);
-          setCameraStreamStatus('idle');
-          setCameraSlowLoading(false);
-          setIsRetrying(false);
-          setCameraNoticeMessage('Webcam was unavailable or timed out. Switched to AI Gesture Simulator so you can start translating immediately!');
-        }
-      }, 7500);
+      }, 3500);
 
       const startCamera = async () => {
         // Verify mediaDevices API support
         if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           if (!isMounted) return;
           clearTimeout(slowLoadingTimer);
-          clearTimeout(autoFallbackTimeout);
           setCameraStreamStatus('error');
           setCameraError({
             type: 'unsupported',
@@ -439,6 +429,30 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
             canRetry: false
           });
           return;
+        }
+
+        // Check if OS or browser detects any camera devices
+        if (navigator.mediaDevices.enumerateDevices) {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            if (videoDevices.length === 0) {
+              if (!isMounted) return;
+              clearTimeout(slowLoadingTimer);
+              setCameraStreamStatus('error');
+              setCameraError({
+                type: 'not_found',
+                title: 'No Webcam Detected',
+                message: 'Your operating system reports 0 connected cameras or video capture devices.',
+                tips: 'Ensure your webcam is plugged in, check physical camera privacy shutter switches, and check OS camera permissions.',
+                canRetry: true
+              });
+              setIsRetrying(false);
+              return;
+            }
+          } catch (enumErr) {
+            console.warn('[LiveTranslateView] enumerateDevices check note:', enumErr);
+          }
         }
 
         // Clean up previous stream tracks first to avoid camera hardware lock
@@ -453,29 +467,40 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
 
         try {
           // Progressive constraints acquisition:
-          // 1. HD 720p with facingMode (ideal)
+          // 1. HD 720p ideal (without strict min bounds to prevent OverconstrainedError)
           // 2. FacingMode only
           // 3. Raw video (no constraints)
-          let stream: MediaStream | null = null;
-          
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
+          const constraintsList: MediaStreamConstraints[] = [
+            {
               video: {
                 facingMode: settings.cameraFacing ? { ideal: settings.cameraFacing } : undefined,
-                width: { ideal: 1280, min: 640 },
-                height: { ideal: 720, min: 480 }
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
               }
-            });
-          } catch (hdErr) {
-            console.warn('[LiveTranslateView] 720p HD constraint rejected, falling back to basic video:', hdErr);
-            try {
-              stream = await navigator.mediaDevices.getUserMedia({
-                video: settings.cameraFacing ? { facingMode: { ideal: settings.cameraFacing } } : true
-              });
-            } catch (facingErr) {
-              console.warn('[LiveTranslateView] FacingMode constraint rejected, falling back to raw video:', facingErr);
-              stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            },
+            {
+              video: settings.cameraFacing ? { facingMode: { ideal: settings.cameraFacing } } : true
+            },
+            {
+              video: true
             }
+          ];
+
+          let stream: MediaStream | null = null;
+          let lastAcquisitionError: any = null;
+
+          for (const constraints of constraintsList) {
+            try {
+              stream = await navigator.mediaDevices.getUserMedia(constraints);
+              if (stream) break;
+            } catch (err: any) {
+              lastAcquisitionError = err;
+              console.warn('[LiveTranslateView] Constraint set rejected, trying next fallback:', constraints, err);
+            }
+          }
+
+          if (!stream) {
+            throw lastAcquisitionError || new Error('Could not acquire webcam video stream.');
           }
 
           if (!isMounted || !stream) {
@@ -528,7 +553,6 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
             if (isActivated || !isMounted) return;
             isActivated = true;
             clearTimeout(slowLoadingTimer);
-            clearTimeout(autoFallbackTimeout);
             clearInterval(fallbackCheckInterval);
             clearTimeout(safetyTrackTimeout);
             setCameraSlowLoading(false);
@@ -612,7 +636,6 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
         } catch (err: any) {
           if (!isMounted) return;
           clearTimeout(slowLoadingTimer);
-          clearTimeout(autoFallbackTimeout);
           clearInterval(fallbackCheckInterval);
           clearTimeout(safetyTrackTimeout);
           console.warn('[LiveTranslateView] Camera initialization error:', err);
@@ -627,7 +650,9 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
             setHardwarePermissionStatus('denied');
             title = 'Camera Permission Blocked';
             message = 'Camera access was blocked by your browser or system.';
-            tips = 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
+            tips = isInIframe
+              ? 'Preview iFrame detected: Browsers block camera permission dialogs inside embedded frames. Click "Open in New Tab" below to allow camera access.'
+              : 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
           } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
             errType = 'not_found';
             title = 'Camera Not Detected';
@@ -647,7 +672,9 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
             errType = 'security';
             title = 'Security Restriction';
             message = 'Camera access is restricted in this context (HTTPS required).';
-            tips = 'Ensure you are accessing this application via HTTPS or a trusted local host.';
+            tips = isInIframe
+              ? 'Preview iFrame restriction: Click "Open in New Tab" below to run the app directly with full camera permissions.'
+              : 'Ensure you are accessing this application via HTTPS or a trusted local host.';
           }
 
           setCameraStreamStatus('error');
@@ -678,7 +705,6 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
     return () => {
       isMounted = false;
       clearTimeout(slowLoadingTimer);
-      clearTimeout(autoFallbackTimeout);
       clearInterval(fallbackCheckInterval);
       clearTimeout(safetyTrackTimeout);
       if (mediaStreamRef.current) {
@@ -1085,6 +1111,36 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
           {/* Main Video & Landmark Stage (Left 7 Cols) */}
           <div className="lg:col-span-7 flex flex-col space-y-4">
             
+            {/* iFrame Helper Banner if in AI Studio / Embedded iframe */}
+            {isInIframe && (
+              <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md animate-in fade-in">
+                <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="text-[11px] sm:text-xs leading-tight">
+                    Running inside preview frame: Browser security may restrict camera prompts in iframes.
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open in New Tab</span>
+                  </a>
+                  <button
+                    onClick={() => setShowDiagnosticsOverlay(true)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center space-x-1 transition-colors border border-slate-700 cursor-pointer"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="hidden sm:inline">Webcam Guide</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Live Camera View Container */}
             <div className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center">
               
@@ -1123,7 +1179,13 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
                   {useRealWebcam ? (
                     <>
                       <video
-                        ref={videoRef}
+                        ref={(el) => {
+                          videoRef.current = el;
+                          if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
+                            el.srcObject = mediaStreamRef.current;
+                            el.play().catch(() => {});
+                          }
+                        }}
                         autoPlay
                         muted
                         playsInline
@@ -1169,36 +1231,69 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
 
                           {/* Slow loading helper card if taking longer than expected */}
                           {cameraSlowLoading && (
-                            <div className="mb-4 p-3 bg-amber-950/60 border border-amber-500/40 rounded-xl text-xs text-amber-200 max-w-sm animate-in fade-in">
-                              <p className="font-semibold mb-1">Camera taking longer than usual?</p>
-                              <p className="text-[11px] text-amber-300/80 mb-2">
-                                If no prompt appeared or your webcam is busy, switch to the AI Gesture Simulator to test sign translation immediately!
+                            <div className="mb-4 p-3.5 bg-amber-950/70 border border-amber-500/50 rounded-2xl text-xs text-amber-200 max-w-md animate-in fade-in space-y-2">
+                              <div className="flex items-center space-x-2 text-amber-300 font-bold">
+                                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                                <span>Camera taking longer than expected?</span>
+                              </div>
+                              <p className="text-[11px] text-slate-300 leading-relaxed">
+                                {isInIframe 
+                                  ? 'Preview iFrame detected: Browsers often block camera prompts in embedded frames. Click "Open in New Tab" for direct webcam access.'
+                                  : 'Look for the lock or camera icon in your browser address bar to click "Allow", or check if another app is using the webcam.'}
                               </p>
-                              <button
-                                onClick={() => {
-                                  setUseRealWebcam(false);
-                                  setCameraStreamStatus('idle');
-                                  setCameraSlowLoading(false);
-                                }}
-                                className="w-full py-1.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
-                              >
-                                <HandMetal className="w-3.5 h-3.5" />
-                                <span>Switch to AI Simulator Now</span>
-                              </button>
+                              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                                {isInIframe && (
+                                  <a
+                                    href={window.location.href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors flex items-center space-x-1.5 shadow-sm"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>Open in New Tab</span>
+                                  </a>
+                                )}
+                                <button
+                                  onClick={() => setShowDiagnosticsOverlay(true)}
+                                  className="py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition-colors flex items-center space-x-1.5 border border-amber-500/30 shadow-sm cursor-pointer"
+                                >
+                                  <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>Webcam Troubleshooter</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setUseRealWebcam(false);
+                                    setCameraStreamStatus('idle');
+                                    setCameraSlowLoading(false);
+                                  }}
+                                  className="py-1.5 px-3 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs transition-colors flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                                >
+                                  <HandMetal className="w-3.5 h-3.5" />
+                                  <span>Use AI Simulator</span>
+                                </button>
+                              </div>
                             </div>
                           )}
 
-                          <div className="flex items-center space-x-2">
+                          <div className="flex flex-wrap items-center justify-center gap-2">
+                            {isInIframe && (
+                              <a
+                                href={window.location.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Open in New Tab</span>
+                              </a>
+                            )}
+
                             <button
-                              onClick={() => {
-                                setUseRealWebcam(false);
-                                setCameraStreamStatus('idle');
-                                setCameraSlowLoading(false);
-                              }}
-                              className="px-4 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                              onClick={() => setShowDiagnosticsOverlay(true)}
+                              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
                             >
-                              <HandMetal className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>Skip & Use AI Gesture Simulator</span>
+                              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Why isn't Webcam Working?</span>
                             </button>
 
                             <button
@@ -1210,6 +1305,18 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
                             >
                               <RefreshCw className="w-3.5 h-3.5" />
                               <span>Retry</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setUseRealWebcam(false);
+                                setCameraStreamStatus('idle');
+                                setCameraSlowLoading(false);
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                            >
+                              <HandMetal className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>Skip to AI Simulator</span>
                             </button>
                           </div>
                         </div>
@@ -1258,18 +1365,31 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
                               </button>
                             )}
 
+                            {isInIframe && (
+                              <a
+                                href={window.location.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-md cursor-pointer transition-all"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                <span>Open in New Tab (Bypass iFrame)</span>
+                              </a>
+                            )}
+
                             <button
                               onClick={() => setShowDiagnosticsOverlay(true)}
-                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-xs font-bold border border-indigo-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
                             >
-                              <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>Camera Diagnostics</span>
+                              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Why isn't Webcam Working?</span>
                             </button>
 
                             <button
                               onClick={() => {
                                 setUseRealWebcam(false);
                                 setCameraStreamStatus('idle');
+                                setCameraError(null);
                               }}
                               className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5"
                             >
@@ -1643,6 +1763,16 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
                         </span>
                       </button>
                     )}
+
+                    {/* Troubleshoot / Why Webcam Isn't Working Direct Pill */}
+                    <button
+                      onClick={() => setShowDiagnosticsOverlay(true)}
+                      className="flex items-center space-x-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-amber-500/40 text-[11px] font-bold transition-all cursor-pointer shadow-lg"
+                      title="Why is Webcam Not Working? Click for instant hardware scan, iframe checks, and fixes"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Webcam Help</span>
+                    </button>
 
                     {isRecording && (
                       <div className="flex items-center space-x-1.5 bg-rose-950/90 backdrop-blur-md px-3 py-1 rounded-full border border-rose-700 text-rose-300 text-xs font-mono font-bold animate-pulse">
@@ -2276,17 +2406,24 @@ export const LiveTranslateView: React.FC<LiveTranslateViewProps> = ({
       <CameraDiagnosticOverlay
         isOpen={showDiagnosticsOverlay}
         onClose={() => setShowDiagnosticsOverlay(false)}
+        permissionStatus={hardwarePermissionStatus}
         streamStatus={cameraStreamStatus}
-        hardwarePermissionStatus={hardwarePermissionStatus}
         activeResolution={activeStreamResolution}
-        videoRef={videoRef}
+        videoElement={videoRef.current}
         mediaStream={mediaStreamRef.current}
         cameraError={cameraError}
+        facingMode={settings.cameraFacing}
+        useRealWebcam={useRealWebcam}
         onRetryCamera={handleRetryCamera}
-        cameraFacing={settings.cameraFacing}
-        onToggleFacing={() => {
+        onSwitchFacingMode={() => {
           onUpdateSettings({ cameraFacing: settings.cameraFacing === 'user' ? 'environment' : 'user' });
           setCameraRetryCount(c => c + 1);
+        }}
+        onToggleWebcamMode={() => {
+          setUseRealWebcam(!useRealWebcam);
+          if (!useRealWebcam) {
+            setCameraRetryCount(c => c + 1);
+          }
         }}
       />
 

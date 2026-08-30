@@ -189,35 +189,64 @@ export const LiveSessionCallView: React.FC<LiveSessionCallViewProps> = ({
     return `${mins.toString().padStart(2, '0')}:${remainingSecs.toString().padStart(2, '0')}`;
   };
 
-  // Real Webcam Initialization
+  // Real Webcam Initialization with graceful audio/video fallback
   useEffect(() => {
+    let isCancelled = false;
+
     if (useRealCameraLocal && !isCameraOff) {
-      navigator.mediaDevices?.getUserMedia({ 
-        video: { facingMode: settings.cameraFacing, width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: true
-      })
-        .then(s => {
-          localStreamRef.current = s;
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = s;
-            localVideoRef.current.play().catch(() => {});
-          }
-          if (mainVideoRef.current && mainViewMode === 'camera') {
-            mainVideoRef.current.srcObject = s;
-            mainVideoRef.current.play().catch(() => {});
-          }
-        })
-        .catch(err => {
-          console.warn('Local webcam permission warning:', err);
+      const acquireStream = async () => {
+        if (!navigator?.mediaDevices?.getUserMedia) {
           setUseRealCameraLocal(false);
-        });
+          return;
+        }
+
+        let s: MediaStream | null = null;
+        // Attempt 1: Video + Audio
+        try {
+          s = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: settings.cameraFacing ? { ideal: settings.cameraFacing } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: true
+          });
+        } catch {
+          // Attempt 2: Video-only if audio or strict resolution fails
+          try {
+            s = await navigator.mediaDevices.getUserMedia({ 
+              video: settings.cameraFacing ? { facingMode: { ideal: settings.cameraFacing } } : true,
+              audio: false
+            });
+          } catch (err) {
+            console.warn('Local webcam acquisition failed:', err);
+            if (!isCancelled) setUseRealCameraLocal(false);
+            return;
+          }
+        }
+
+        if (isCancelled || !s) {
+          if (s) s.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        localStreamRef.current = s;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = s;
+          localVideoRef.current.play().catch(() => {});
+        }
+        if (mainVideoRef.current && mainViewMode === 'camera') {
+          mainVideoRef.current.srcObject = s;
+          mainVideoRef.current.play().catch(() => {});
+        }
+      };
+
+      acquireStream();
     } else {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
       }
     }
+
     return () => {
+      isCancelled = true;
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
       }
