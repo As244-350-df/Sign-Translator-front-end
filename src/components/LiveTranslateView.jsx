@@ -67,12 +67,8 @@ const LiveTranslateView = ({
   const [isCameraActive, setIsCameraActive] = useState(true);
   const [useRealWebcam, setUseRealWebcam] = useState(true);
   const [cameraStreamStatus, setCameraStreamStatus] = useState("idle");
-  const [cameraSlowLoading, setCameraSlowLoading] = useState(false);
   const [cameraNoticeMessage, setCameraNoticeMessage] = useState(null);
   const [cameraError, setCameraError] = useState(null);
-  const [cameraRetryCount, setCameraRetryCount] = useState(0);
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [permissionError, setPermissionError] = useState(null);
   const [hardwarePermissionStatus, setHardwarePermissionStatus] = useState("checking");
   const [activeStreamResolution, setActiveStreamResolution] = useState(null);
   const [showDiagnosticsOverlay, setShowDiagnosticsOverlay] = useState(false);
@@ -96,7 +92,7 @@ const LiveTranslateView = ({
   });
   const [tfTelemetry, setTfTelemetry] = useState({
     fps: 60,
-    gesture: "\u{1F590}\uFE0F HELLO",
+    gesture: "🖐️ HELLO",
     confidence: 0.98,
     isReal: false,
     holdProgress: 0.5
@@ -104,7 +100,7 @@ const LiveTranslateView = ({
   const [tfEngineTelemetry, setTfEngineTelemetry] = useState(void 0);
   const [isTfModelEnabled, setIsTfModelEnabled] = useState(true);
   const [activeSignMeaning, setActiveSignMeaning] = useState(SIGN_DICTIONARY["HELLO"] || {
-    symbol: "\u{1F590}\uFE0F",
+    symbol: "🖐️",
     signName: "HELLO",
     translatedText: "Hello",
     meaning: "Standard friendly greeting",
@@ -151,6 +147,7 @@ const LiveTranslateView = ({
   const animationFrameId = useRef(null);
   const speechListenerRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const cameraRequestInProgressRef = useRef(false);
 
   // Keep latest mutable props & states in refs so loops never have to teardown/restart
   const settingsRef = useRef(settings);
@@ -230,25 +227,152 @@ const LiveTranslateView = ({
     }));
   };
   const currentLanguage = SIGN_LANGUAGES.find((l) => l.code === settings.primarySignLanguage) || SIGN_LANGUAGES[0];
+
+  const requestCameraAccess = async (forceNew = false) => {
+    if (cameraRequestInProgressRef.current) return;
+
+    // Fast return if stream is already actively running and live
+    if (!forceNew && mediaStreamRef.current) {
+      const liveTrack = mediaStreamRef.current.getVideoTracks().find((t) => t.readyState === "live");
+      if (liveTrack && liveTrack.enabled) {
+        if (videoRef.current && videoRef.current.srcObject !== mediaStreamRef.current) {
+          videoRef.current.srcObject = mediaStreamRef.current;
+          videoRef.current.play().catch(() => {});
+        }
+        setCameraStreamStatus("active");
+        setCameraError(null);
+        return;
+      }
+    }
+
+    cameraRequestInProgressRef.current = true;
+    setCameraStreamStatus("requesting_permission");
+    setCameraError(null);
+
+    try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Webcam API is not supported in this browser environment.");
+      }
+
+      // Fast single-pass getUserMedia with immediate simple fallback
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: settings.cameraFacing ? { ideal: settings.cameraFacing } : "user"
+          },
+          audio: false
+        });
+      } catch (idealErr) {
+        console.warn("[LiveTranslateView] High-res constraint rejected, falling back to basic video:", idealErr);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
+      if (!stream) {
+        throw new Error("Could not acquire video stream from camera.");
+      }
+
+      if (mediaStreamRef.current && mediaStreamRef.current !== stream) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      mediaStreamRef.current = stream;
+      setHardwarePermissionStatus("granted");
+
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const s = videoTrack.getSettings ? videoTrack.getSettings() : null;
+        if (s?.width && s?.height) {
+          setActiveStreamResolution({ width: s.width, height: s.height });
+        }
+        videoTrack.onended = () => {
+          console.warn("[LiveTranslateView] Video track ended / disconnected.");
+          setCameraStreamStatus("error");
+          setCameraError({
+            type: "disconnected",
+            title: "Camera Disconnected",
+            message: "The camera stream ended or the device was disconnected.",
+            tips: 'Click "Retry Camera Stream" to reconnect.',
+            canRetry: true
+          });
+        };
+      }
+
+      if (videoRef.current) {
+        videoRef.current.muted = true;
+        videoRef.current.defaultMuted = true;
+        videoRef.current.setAttribute("muted", "");
+        videoRef.current.setAttribute("playsinline", "true");
+        videoRef.current.setAttribute("webkit-playsinline", "true");
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch((e) => console.warn("[LiveTranslateView] Video play note:", e));
+      }
+
+      setCameraStreamStatus("active");
+      setCameraError(null);
+    } catch (err) {
+      console.warn("[LiveTranslateView] Camera initialization error:", err);
+      let errType = "unknown";
+      let title = "Camera Connection Failed";
+      let message = err?.message || "Unable to access webcam.";
+      let tips = "Please ensure camera permissions are allowed in your browser settings.";
+
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        errType = "permission_denied";
+        setHardwarePermissionStatus("denied");
+        title = "Camera Permission Blocked";
+        message = "Camera access was denied by your browser or operating system.";
+        tips = isInIframe
+          ? 'Preview iFrame detected: Browsers block camera permission dialogs inside embedded frames. Click "Open in New Tab" below to grant camera access directly.'
+          : 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
+      } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
+        errType = "not_found";
+        title = "Camera Not Detected";
+        message = "No video capture hardware was found on your device.";
+        tips = "Connect a webcam or check your system camera privacy settings.";
+      } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
+        errType = "in_use";
+        title = "Camera Already in Use";
+        message = "Your camera is currently locked by another application or browser tab.";
+        tips = 'Close other video calling apps (Zoom, Meet, Teams) or browser tabs using the camera, then click "Retry Camera Stream".';
+      } else if (err?.name === "SecurityError") {
+        errType = "security";
+        title = "Security Restriction";
+        message = "Camera access requires HTTPS or localhost.";
+        tips = isInIframe
+          ? 'Preview iFrame restriction: Click "Open in New Tab" below to run the app directly with full camera permissions.'
+          : "Ensure you are accessing this application via HTTPS or a trusted local host.";
+      }
+
+      setCameraStreamStatus("error");
+      setCameraError({
+        type: errType,
+        title,
+        message,
+        tips,
+        canRetry: true
+      });
+    } finally {
+      cameraRequestInProgressRef.current = false;
+    }
+  };
+
   const handleRetryCamera = () => {
     setInputSourceMode("webcam");
     setUseRealWebcam(true);
     setIsCameraActive(true);
-    setCameraSlowLoading(false);
-    setCameraNoticeMessage(null);
-    setCameraStreamStatus("requesting_permission");
-    setCameraError(null);
-    setPermissionError(null);
-    setCameraRetryCount((prev) => prev + 1);
+    requestCameraAccess(true);
   };
+
   const handleSelectInputMode = (mode) => {
     setInputSourceMode(mode);
     if (mode === "webcam") {
       syntheticVideoEngine.stopStream();
       setUseRealWebcam(true);
       setIsCameraActive(true);
-      setCameraStreamStatus("requesting_permission");
-      setCameraRetryCount((c) => c + 1);
+      requestCameraAccess(false);
     } else if (mode === "simulator") {
       syntheticVideoEngine.stopStream();
       setUseRealWebcam(false);
@@ -266,8 +390,7 @@ const LiveTranslateView = ({
         videoRef.current.src = uploadedVideoUrl;
         videoRef.current.loop = true;
         videoRef.current.playbackRate = videoPlaybackRate;
-        videoRef.current.play().catch(() => {
-        });
+        videoRef.current.play().catch(() => {});
       }
     } else if (mode === "demo_clips") {
       setUseRealWebcam(false);
@@ -276,12 +399,12 @@ const LiveTranslateView = ({
       if (videoRef.current && stream) {
         videoRef.current.removeAttribute("src");
         videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {
-        });
+        videoRef.current.play().catch(() => {});
       }
       handTrackerRef.current.forceSign(activeDemoId);
     }
   };
+
   const handleUploadVideo = (file) => {
     if (uploadedVideoUrl) {
       URL.revokeObjectURL(uploadedVideoUrl);
@@ -302,6 +425,7 @@ const LiveTranslateView = ({
       videoRef.current.play().catch((e) => console.warn("[LiveTranslateView] Video play note:", e));
     }
   };
+
   const handleSelectDemoClip = (preset) => {
     setActiveDemoId(preset.id);
     setInputSourceMode("demo_clips");
@@ -315,387 +439,58 @@ const LiveTranslateView = ({
     }
     handTrackerRef.current.forceSign(preset.id);
   };
+
   const handleTogglePlayPauseUploadedVideo = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play().catch(() => {
-      });
+      videoRef.current.play().catch(() => {});
       setIsPlayingUploadedVideo(true);
     } else {
       videoRef.current.pause();
       setIsPlayingUploadedVideo(false);
     }
   };
+
   const handleRestartUploadedVideo = () => {
     if (!videoRef.current) return;
     videoRef.current.currentTime = 0;
-    videoRef.current.play().catch(() => {
-    });
+    videoRef.current.play().catch(() => {});
     setIsPlayingUploadedVideo(true);
   };
+
   const handleChangePlaybackRate = (rate) => {
     setVideoPlaybackRate(rate);
     if (videoRef.current) {
       videoRef.current.playbackRate = rate;
     }
   };
+
+  // Camera stream lifecycle effect
   useEffect(() => {
     let isMounted = true;
-    let permissionStatusObj = null;
-    if (typeof navigator !== "undefined" && navigator.permissions?.query) {
-      navigator.permissions.query({ name: "camera" }).then((status) => {
-        if (!isMounted) return;
-        permissionStatusObj = status;
-        setHardwarePermissionStatus(status.state);
-        const handlePermissionChange = () => {
-          if (!isMounted) return;
-          console.log("[LiveTranslateView] Camera permission state changed:", status.state);
-          setHardwarePermissionStatus(status.state);
-          if (status.state === "granted") {
-            if (isCameraActive) {
-              setUseRealWebcam(true);
-              setCameraError(null);
-              setPermissionError(null);
-              setCameraRetryCount((c) => c + 1);
-            }
-          } else if (status.state === "denied") {
-            if (useRealWebcam && isCameraActive) {
-              setCameraStreamStatus("error");
-              setCameraError({
-                type: "permission_denied",
-                title: "Camera Permission Blocked",
-                message: "Camera permission was denied in browser settings.",
-                tips: 'Click the lock or camera icon in your address bar to allow camera access, then click "Retry Camera".',
-                canRetry: true
-              });
-            }
-          }
-        };
-        status.addEventListener("change", handlePermissionChange);
-      }).catch(() => {
-        if (isMounted) {
-          setHardwarePermissionStatus("unsupported");
-        }
-      });
-    } else {
-      setHardwarePermissionStatus("unsupported");
-    }
-    const handleDeviceChange = () => {
-      if (!isMounted) return;
-      console.log("[LiveTranslateView] Media device change detected");
-      if (cameraError?.type === "not_found" && isCameraActive && useRealWebcam) {
-        setCameraRetryCount((c) => c + 1);
-      }
-    };
-    if (navigator?.mediaDevices?.addEventListener) {
-      navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
-    }
-    const handleVisibilityChange = () => {
-      if (!isMounted) return;
-      if (document.visibilityState === "visible" && isCameraActive && useRealWebcam && cameraStreamStatus === "error") {
-        if (navigator?.permissions?.query) {
-          navigator.permissions.query({ name: "camera" }).then((status) => {
-            if (status.state === "granted") {
-              setCameraRetryCount((c) => c + 1);
-            }
-          }).catch(() => {
-          });
-        }
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleVisibilityChange);
-    return () => {
-      isMounted = false;
-      if (permissionStatusObj) {
-        try {
-          permissionStatusObj.removeEventListener("change", () => {
-          });
-        } catch {
-        }
-      }
-      if (navigator?.mediaDevices?.removeEventListener) {
-        navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
-      }
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleVisibilityChange);
-    };
-  }, [isCameraActive, useRealWebcam, cameraError?.type, cameraStreamStatus]);
-  useEffect(() => {
-    let isMounted = true;
-    let fallbackCheckInterval = null;
-    let slowLoadingTimer = null;
-    let safetyTrackTimeout = null;
-    if (isCameraActive && useRealWebcam) {
-      setCameraSlowLoading(false);
-      slowLoadingTimer = setTimeout(() => {
-        if (isMounted) {
-          setCameraSlowLoading(true);
-        }
-      }, 3500);
-      const startCamera = async () => {
-        if (typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          if (!isMounted) return;
-          clearTimeout(slowLoadingTimer);
-          setCameraStreamStatus("error");
-          setCameraError({
-            type: "unsupported",
-            title: "Webcam Not Supported",
-            message: "Your browser environment does not support mediaDevices.getUserMedia.",
-            tips: "Please open this application in a modern browser with webcam support (Chrome, Edge, Safari, Firefox).",
-            canRetry: false
-          });
-          return;
-        }
-        if (navigator.mediaDevices.enumerateDevices) {
-          try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter((d) => d.kind === "videoinput");
-            if (videoDevices.length === 0) {
-              if (!isMounted) return;
-              clearTimeout(slowLoadingTimer);
-              setCameraStreamStatus("error");
-              setCameraError({
-                type: "not_found",
-                title: "No Webcam Detected",
-                message: "Your operating system reports 0 connected cameras or video capture devices.",
-                tips: "Ensure your webcam is plugged in, check physical camera privacy shutter switches, and check OS camera permissions.",
-                canRetry: true
-              });
-              setIsRetrying(false);
-              return;
-            }
-          } catch (enumErr) {
-            console.warn("[LiveTranslateView] enumerateDevices check note:", enumErr);
-          }
-        }
-        if (mediaStreamRef.current) {
-          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-          mediaStreamRef.current = null;
-        }
-        setCameraStreamStatus("requesting_permission");
-        setCameraError(null);
-        setIsRetrying(true);
-        try {
-          const constraintsList = [
-            {
-              video: {
-                facingMode: settings.cameraFacing ? { ideal: settings.cameraFacing } : void 0,
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-              }
-            },
-            {
-              video: settings.cameraFacing ? { facingMode: { ideal: settings.cameraFacing } } : true
-            },
-            {
-              video: true
-            }
-          ];
-          let stream = null;
-          let lastAcquisitionError = null;
-          for (const constraints of constraintsList) {
-            try {
-              stream = await navigator.mediaDevices.getUserMedia(constraints);
-              if (stream) break;
-            } catch (err) {
-              lastAcquisitionError = err;
-              console.warn("[LiveTranslateView] Constraint set rejected, trying next fallback:", constraints, err);
-            }
-          }
-          if (!stream) {
-            throw lastAcquisitionError || new Error("Could not acquire webcam video stream.");
-          }
-          if (!isMounted || !stream) {
-            if (stream) {
-              stream.getTracks().forEach((t) => t.stop());
-            }
-            return;
-          }
-          mediaStreamRef.current = stream;
-          setHardwarePermissionStatus("granted");
-          const videoTrack = stream.getVideoTracks()[0];
-          if (videoTrack) {
-            const trackSettings = videoTrack.getSettings ? videoTrack.getSettings() : null;
-            if (trackSettings?.width && trackSettings?.height) {
-              setActiveStreamResolution({ width: trackSettings.width, height: trackSettings.height });
-            }
-            videoTrack.onended = () => {
-              if (!isMounted) return;
-              console.warn("[LiveTranslateView] Video track ended / camera disconnected.");
-              setCameraStreamStatus("error");
-              setCameraError({
-                type: "disconnected",
-                title: "Camera Disconnected",
-                message: "The camera stream ended or the device was disconnected.",
-                tips: 'Ensure your camera is connected, then click "Retry Camera Stream".',
-                canRetry: true
-              });
-            };
-            videoTrack.onmute = () => {
-              console.warn("[LiveTranslateView] Video track muted by hardware or system.");
-            };
-            videoTrack.onunmute = () => {
-              console.log("[LiveTranslateView] Video track unmuted.");
-              if (isMounted) {
-                setCameraStreamStatus("active");
-                setCameraError(null);
-              }
-            };
-          }
-          let isActivated = false;
-          const markActive = () => {
-            if (isActivated || !isMounted) return;
-            isActivated = true;
-            clearTimeout(slowLoadingTimer);
-            clearInterval(fallbackCheckInterval);
-            clearTimeout(safetyTrackTimeout);
-            setCameraSlowLoading(false);
-            setCameraStreamStatus("active");
-            setCameraError(null);
-            setPermissionError(null);
-            setIsRetrying(false);
-            if (videoRef.current && videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
-              setActiveStreamResolution({
-                width: videoRef.current.videoWidth,
-                height: videoRef.current.videoHeight
-              });
-            }
-          };
-          const bindToVideoElement = (el) => {
-            el.muted = true;
-            el.defaultMuted = true;
-            el.setAttribute("muted", "");
-            el.setAttribute("playsinline", "true");
-            el.setAttribute("webkit-playsinline", "true");
-            el.srcObject = stream;
-            el.onloadedmetadata = markActive;
-            el.onloadeddata = markActive;
-            el.oncanplay = markActive;
-            el.onplaying = markActive;
-            el.ontimeupdate = markActive;
-            try {
-              const playPromise = el.play();
-              if (playPromise !== void 0) {
-                playPromise.then(() => markActive()).catch((err) => {
-                  console.warn("[LiveTranslateView] Video play interaction note:", err);
-                  markActive();
-                });
-              }
-            } catch (err) {
-              console.warn("[LiveTranslateView] Sync play call exception:", err);
-              markActive();
-            }
-          };
-          if (videoRef.current) {
-            bindToVideoElement(videoRef.current);
-          } else {
-            const mountPoll = setInterval(() => {
-              if (videoRef.current) {
-                clearInterval(mountPoll);
-                bindToVideoElement(videoRef.current);
-              }
-            }, 50);
-            setTimeout(() => clearInterval(mountPoll), 1500);
-          }
-          fallbackCheckInterval = setInterval(() => {
-            if (isActivated || !isMounted) {
-              clearInterval(fallbackCheckInterval);
-              return;
-            }
-            if (videoRef.current && (videoRef.current.readyState >= 1 || videoRef.current.videoWidth > 0 || videoRef.current.currentTime > 0)) {
-              markActive();
-            }
-          }, 80);
-          safetyTrackTimeout = setTimeout(() => {
-            clearInterval(fallbackCheckInterval);
-            const track = stream?.getVideoTracks()[0];
-            if (!isActivated && isMounted && track && track.readyState === "live") {
-              console.log("[LiveTranslateView] Safety activator: live track verified");
-              markActive();
-            }
-          }, 1e3);
-          setPermissionError(null);
-        } catch (err) {
-          if (!isMounted) return;
-          clearTimeout(slowLoadingTimer);
-          clearInterval(fallbackCheckInterval);
-          clearTimeout(safetyTrackTimeout);
-          console.warn("[LiveTranslateView] Camera initialization error:", err);
-          let errType = "unknown";
-          let title = "Camera Connection Failed";
-          let message = err?.message || "Unable to connect to camera.";
-          let tips = "Please ensure your camera is connected and permissions are allowed.";
-          if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
-            errType = "permission_denied";
-            setHardwarePermissionStatus("denied");
-            title = "Camera Permission Blocked";
-            message = "Camera access was blocked by your browser or system.";
-            tips = isInIframe ? 'Preview iFrame detected: Browsers block camera permission dialogs inside embedded frames. Click "Open in New Tab" below to allow camera access.' : 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
-          } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
-            errType = "not_found";
-            title = "Camera Not Detected";
-            message = "No video capture hardware was found on your device.";
-            tips = "Connect a webcam or enable your camera in operating system privacy settings.";
-          } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
-            errType = "in_use";
-            title = "Camera Already in Use";
-            message = "Your camera is currently locked by another application or browser tab.";
-            tips = 'Close other video calling apps (Zoom, Meet, Teams) or browser tabs using the camera, then click "Retry Camera Stream".';
-          } else if (err?.name === "OverconstrainedError") {
-            errType = "unknown";
-            title = "Resolution Constraint";
-            message = "The requested camera resolution is not supported by your hardware.";
-            tips = "Try switching camera facing mode or refreshing the page.";
-          } else if (err?.name === "SecurityError") {
-            errType = "security";
-            title = "Security Restriction";
-            message = "Camera access is restricted in this context (HTTPS required).";
-            tips = isInIframe ? 'Preview iFrame restriction: Click "Open in New Tab" below to run the app directly with full camera permissions.' : "Ensure you are accessing this application via HTTPS or a trusted local host.";
-          }
-          setCameraStreamStatus("error");
-          setCameraError({
-            type: errType,
-            title,
-            message,
-            tips,
-            canRetry: true
-          });
-          setPermissionError(message);
-          setIsRetrying(false);
-        }
-      };
-      startCamera();
-    } else {
+    if (isCameraActive && useRealWebcam && inputSourceMode === "webcam") {
+      requestCameraAccess(false);
+    } else if (!isCameraActive || !useRealWebcam) {
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
+        mediaStreamRef.current.getTracks().forEach((t) => (t.enabled = false));
       }
       setCameraStreamStatus("idle");
-      setCameraError(null);
-      setIsRetrying(false);
-      setCameraSlowLoading(false);
     }
+
     return () => {
       isMounted = false;
-      clearTimeout(slowLoadingTimer);
-      clearInterval(fallbackCheckInterval);
-      clearTimeout(safetyTrackTimeout);
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-      }
     };
-  }, [isCameraActive, useRealWebcam, settings.cameraFacing, cameraRetryCount]);
+  }, [isCameraActive, useRealWebcam, inputSourceMode]);
+
+  // Video element binding effect
   useEffect(() => {
-    if (useRealWebcam && videoRef.current && mediaStreamRef.current) {
+    if (useRealWebcam && inputSourceMode === "webcam" && videoRef.current && mediaStreamRef.current) {
       if (videoRef.current.srcObject !== mediaStreamRef.current) {
         videoRef.current.srcObject = mediaStreamRef.current;
-        videoRef.current.play().catch(() => {
-        });
+        videoRef.current.play().catch(() => {});
       }
     }
-  }, [useRealWebcam, cameraStreamStatus]);
+  }, [useRealWebcam, inputSourceMode, cameraStreamStatus]);
   useEffect(() => {
     if (!isCameraActive || translationMode !== "sign_to_text") return;
     const canvas = canvasRef.current;
@@ -1052,76 +847,79 @@ const LiveTranslateView = ({
     }
             <div className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center">
               
-              {
-      /* Notice banner if camera timed out or was switched */
-    }
-              {cameraNoticeMessage && inputSourceMode === "webcam" && <div className="absolute top-3 left-3 right-3 z-40 p-2.5 bg-indigo-950/95 backdrop-blur-md border border-indigo-500/50 rounded-2xl shadow-xl flex items-center justify-between text-xs text-indigo-200 animate-in slide-in-from-top-2">
+              {/* Notice banner if camera timed out or was switched */}
+              {cameraNoticeMessage && inputSourceMode === "webcam" && (
+                <div className="absolute top-3 left-3 right-3 z-40 p-2.5 bg-indigo-950/95 backdrop-blur-md border border-indigo-500/50 rounded-2xl shadow-xl flex items-center justify-between text-xs text-indigo-200 animate-in slide-in-from-top-2">
                   <div className="flex items-center space-x-2 min-w-0 pr-2">
                     <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
                     <span className="text-[11px] sm:text-xs truncate sm:whitespace-normal">{cameraNoticeMessage}</span>
                   </div>
                   <div className="flex items-center space-x-2 shrink-0">
                     <button
-      onClick={() => {
-        setCameraNoticeMessage(null);
-        setUseRealWebcam(true);
-        setCameraRetryCount((c) => c + 1);
-      }}
-      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] sm:text-xs transition-colors cursor-pointer"
-    >
+                      onClick={() => {
+                        setCameraNoticeMessage(null);
+                        handleRetryCamera();
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] sm:text-xs transition-colors cursor-pointer"
+                    >
                       Retry Webcam
                     </button>
                     <button
-      onClick={() => setCameraNoticeMessage(null)}
-      className="p-1 text-slate-400 hover:text-white rounded-md cursor-pointer"
-      title="Dismiss notice"
-    >
+                      onClick={() => setCameraNoticeMessage(null)}
+                      className="p-1 text-slate-400 hover:text-white rounded-md cursor-pointer"
+                      title="Dismiss notice"
+                    >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                </div>}
+                </div>
+              )}
 
-              {isCameraActive ? <>
-                  {
-      /* Real WebCam / Uploaded Video / Demo Video Feed */
-    }
-                  {inputSourceMode !== "simulator" ? <>
+              {isCameraActive ? (
+                <>
+                  {/* Real WebCam / Uploaded Video / Demo Video Feed */}
+                  {inputSourceMode !== "simulator" ? (
+                    <>
                       <video
-      ref={videoRef}
-      autoPlay
-      muted
-      playsInline
-      loop={inputSourceMode === "video_upload"}
-      style={{
-        transform: inputSourceMode === "webcam" ? `scaleX(-${Number(cameraZoom) || 1}) scaleY(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)` : `scale(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)`,
-        transformOrigin: "center center"
-      }}
-      className={`absolute inset-0 w-full h-full object-cover transition-all duration-300 ease-out ${inputSourceMode === "webcam" && cameraStreamStatus !== "active" ? "opacity-20 filter blur-xs" : "opacity-100"}`}
-    />
+                        ref={videoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        loop={inputSourceMode === "video_upload"}
+                        style={{
+                          transform:
+                            inputSourceMode === "webcam"
+                              ? `scaleX(-${Number(cameraZoom) || 1}) scaleY(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)`
+                              : `scale(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)`,
+                          transformOrigin: "center center"
+                        }}
+                        className={`absolute inset-0 w-full h-full object-cover transition-all duration-300 ease-out ${
+                          inputSourceMode === "webcam" && cameraStreamStatus !== "active" ? "opacity-20 filter blur-xs" : "opacity-100"
+                        }`}
+                      />
 
-                      {
-      /* Empty Uploaded Video Prompt */
-    }
-                      {inputSourceMode === "video_upload" && !uploadedVideoUrl && <div className="absolute inset-0 z-20 bg-slate-950/80 flex flex-col items-center justify-center p-6 text-center">
+                      {/* Empty Uploaded Video Prompt */}
+                      {inputSourceMode === "video_upload" && !uploadedVideoUrl && (
+                        <div className="absolute inset-0 z-20 bg-slate-950/80 flex flex-col items-center justify-center p-6 text-center">
                           <Film className="w-12 h-12 text-indigo-400 mb-3 animate-pulse" />
                           <h4 className="text-sm font-bold text-white mb-1">No Video File Selected</h4>
                           <p className="text-xs text-slate-400 max-w-xs mb-3">
                             Upload an MP4, WebM, or MOV video of sign language to track hands and recognize gestures.
                           </p>
-                        </div>}
+                        </div>
+                      )}
 
-                      {
-      /* Active Demo Clip Badge */
-    }
-                      {inputSourceMode === "demo_clips" && <div className="absolute top-4 left-4 z-20 px-3 py-1.5 rounded-xl bg-cyan-950/80 backdrop-blur-md border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center space-x-2 shadow-lg">
+                      {/* Active Demo Clip Badge */}
+                      {inputSourceMode === "demo_clips" && (
+                        <div className="absolute top-4 left-4 z-20 px-3 py-1.5 rounded-xl bg-cyan-950/80 backdrop-blur-md border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center space-x-2 shadow-lg">
                           <Film className="w-3.5 h-3.5 text-cyan-400" />
                           <span>Demo Feed: {activeDemoId}</span>
-                        </div>}
+                        </div>
+                      )}
 
-                      {
-      /* Camera Stream Loading State Indicator */
-    }
-                      {inputSourceMode === "webcam" && (cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission") && <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
+                      {/* Camera Stream Loading State Indicator */}
+                      {inputSourceMode === "webcam" && (cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission") && (
+                        <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
                           <div className="relative mb-4">
                             <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
                               <Camera className="w-8 h-8 animate-pulse" />
@@ -1144,88 +942,50 @@ const LiveTranslateView = ({
                             {cameraStreamStatus === "requesting_permission" ? "Your browser may show a permission dialog near the address bar. Grant access to begin real-time sign recognition." : "Initializing video frames, frame buffers, and neural hand landmark detection pipeline."}
                           </p>
 
-                          {
-      /* Slow loading helper card if taking longer than expected */
-    }
-                          {cameraSlowLoading && <div className="mb-4 p-3.5 bg-amber-950/70 border border-amber-500/50 rounded-2xl text-xs text-amber-200 max-w-md animate-in fade-in space-y-2">
-                              <div className="flex items-center space-x-2 text-amber-300 font-bold">
-                                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                                <span>Camera taking longer than expected?</span>
-                              </div>
-                              <p className="text-[11px] text-slate-300 leading-relaxed">
-                                {isInIframe ? 'Preview iFrame detected: Browsers often block camera prompts in embedded frames. Click "Open in New Tab" for direct webcam access, or switch to the 3D Simulator / Video Upload.' : 'Look for the lock or camera icon in your browser address bar to click "Allow", or check if another app is using the webcam.'}
-                              </p>
-                              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                                {isInIframe && <a
-      href={getSafeCurrentUrl()}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors flex items-center space-x-1.5 shadow-sm"
-    >
-                                    <ExternalLink className="w-3.5 h-3.5" />
-                                    <span>Open in New Tab</span>
-                                  </a>}
-                                <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs transition-colors flex items-center space-x-1.5 border border-amber-500/30 shadow-sm cursor-pointer"
-    >
-                                  <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-                                  <span>Webcam Troubleshooter</span>
-                                </button>
-                                <button
-      onClick={() => handleSelectInputMode("simulator")}
-      className="py-1.5 px-3 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs transition-colors flex items-center space-x-1.5 shadow-sm cursor-pointer"
-    >
-                                  <HandMetal className="w-3.5 h-3.5" />
-                                  <span>Use 3D Simulator</span>
-                                </button>
-                              </div>
-                            </div>}
-
                           <div className="flex flex-wrap items-center justify-center gap-2">
-                            {isInIframe && <a
-      href={getSafeCurrentUrl()}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-sm cursor-pointer"
-    >
+                            {isInIframe && (
+                              <a
+                                href={getSafeCurrentUrl()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                              >
                                 <ExternalLink className="w-3.5 h-3.5" />
                                 <span>Open in New Tab</span>
-                              </a>}
+                              </a>
+                            )}
 
                             <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-    >
+                              onClick={() => setShowDiagnosticsOverlay(true)}
+                              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                            >
                               <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
                               <span>Why isn't Webcam Working?</span>
                             </button>
 
                             <button
-      onClick={() => {
-        setCameraRetryCount((c) => c + 1);
-      }}
-      className="px-3 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/30 transition-colors cursor-pointer flex items-center space-x-1 shadow-sm"
-      title="Force Re-attempt Camera"
-    >
+                              onClick={handleRetryCamera}
+                              className="px-3 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/30 transition-colors cursor-pointer flex items-center space-x-1 shadow-sm"
+                              title="Force Re-attempt Camera"
+                            >
                               <RefreshCw className="w-3.5 h-3.5" />
                               <span>Retry</span>
                             </button>
 
                             <button
-      onClick={() => handleSelectInputMode("simulator")}
-      className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-    >
+                              onClick={() => handleSelectInputMode("simulator")}
+                              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                            >
                               <HandMetal className="w-3.5 h-3.5 text-indigo-400" />
                               <span>Switch to 3D Simulator</span>
                             </button>
                           </div>
-                        </div>}
+                        </div>
+                      )}
 
-                      {
-      /* Camera Stream Error State Indicator & Recovery Interface */
-    }
-                      {inputSourceMode === "webcam" && cameraStreamStatus === "error" && cameraError && <div className="absolute inset-0 z-30 bg-slate-950/92 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
+                      {/* Camera Stream Error State Indicator & Recovery Interface */}
+                      {inputSourceMode === "webcam" && cameraStreamStatus === "error" && cameraError && (
+                        <div className="absolute inset-0 z-30 bg-slate-950/92 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
                           <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-3 shadow-lg shadow-rose-500/10">
                             {cameraError.type === "permission_denied" ? <ShieldAlert className="w-8 h-8" /> : cameraError.type === "not_found" ? <VideoOff className="w-8 h-8" /> : cameraError.type === "in_use" ? <AlertCircle className="w-8 h-8" /> : <CameraOff className="w-8 h-8" />}
                           </div>
@@ -1247,51 +1007,57 @@ const LiveTranslateView = ({
                           </div>
 
                           <div className="flex flex-wrap items-center justify-center gap-2.5 mt-3">
-                            {cameraError.canRetry && <button
-      onClick={handleRetryCamera}
-      disabled={isRetrying}
-      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
-    >
-                                <RefreshCw className={`w-3.5 h-3.5 ${isRetrying ? "animate-spin" : ""}`} />
-                                <span>{isRetrying ? "Connecting to Camera..." : "Retry Camera Stream"}</span>
-                              </button>}
+                            {cameraError.canRetry && (
+                              <button
+                                onClick={handleRetryCamera}
+                                disabled={cameraStreamStatus === "requesting_permission"}
+                                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
+                                <span>{cameraStreamStatus === "requesting_permission" ? "Connecting to Camera..." : "Retry Camera Stream"}</span>
+                              </button>
+                            )}
 
-                            {isInIframe && <a
-      href={getSafeCurrentUrl()}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-md cursor-pointer transition-all"
-    >
+                            {isInIframe && (
+                              <a
+                                href={getSafeCurrentUrl()}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-md cursor-pointer transition-all"
+                              >
                                 <ExternalLink className="w-3.5 h-3.5" />
                                 <span>Open in New Tab (Bypass iFrame)</span>
-                              </a>}
+                              </a>
+                            )}
 
                             <button
-      onClick={() => handleSelectInputMode("simulator")}
-      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
-    >
+                              onClick={() => handleSelectInputMode("simulator")}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
+                            >
                               <HandMetal className="w-3.5 h-3.5" />
                               <span>Switch to 3D Simulator (No Webcam)</span>
                             </button>
 
                             <button
-      onClick={() => handleSelectInputMode("demo_clips")}
-      className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
-    >
+                              onClick={() => handleSelectInputMode("demo_clips")}
+                              className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
+                            >
                               <Film className="w-3.5 h-3.5" />
                               <span>Play Demo Sign Video</span>
                             </button>
 
                             <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-    >
+                              onClick={() => setShowDiagnosticsOverlay(true)}
+                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                            >
                               <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
                               <span>Camera Diagnostic</span>
                             </button>
                           </div>
-                        </div>}
-                    </> : (
+                        </div>
+                      )}
+                    </>
+                  ) : (
       /* Simulated 3D Video Background for Test Mode */
       <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-6 text-center">
                       <div className="w-44 h-44 rounded-full bg-indigo-500/10 animate-ping absolute pointer-events-none" />
@@ -1674,28 +1440,31 @@ const LiveTranslateView = ({
     }
                       <div className="flex items-center space-x-2 self-end sm:self-center">
                         <button
-      onClick={handleCommitCurrentSign}
-      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
-      title="Commit this translated sign immediately to the sentence"
-    >
+                          onClick={handleCommitCurrentSign}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
+                          title="Commit this translated sign immediately to the sentence"
+                        >
                           <Plus className="w-3.5 h-3.5" />
                           <span>Add to Text</span>
                         </button>
                       </div>
                     </div>}
-                </> : <div className="text-center p-8">
+                </>
+              ) : (
+                <div className="text-center p-8">
                   <CameraOff className="w-12 h-12 text-slate-600 mx-auto mb-3" />
                   <p className="text-slate-300 font-semibold mb-1">Camera Feed Paused</p>
                   <p className="text-xs text-slate-500 max-w-xs mb-4">
                     Enable camera to start live sign language landmark tracking and translation.
                   </p>
                   <button
-      onClick={() => setIsCameraActive(true)}
-      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
-    >
+                    onClick={() => setIsCameraActive(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
+                  >
                     Start Translation Camera
                   </button>
-                </div>}
+                </div>
+              )}
             </div>
 
             {
@@ -1712,31 +1481,32 @@ const LiveTranslateView = ({
                 </button>
 
                 <button
-      onClick={() => {
-        if (!useRealWebcam) {
-          setUseRealWebcam(true);
-          setCameraRetryCount((c) => c + 1);
-        } else {
-          setUseRealWebcam(false);
-        }
-      }}
-      className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${useRealWebcam ? cameraStreamStatus === "error" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700" : "bg-indigo-600 text-white shadow-xs" : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"}`}
-    >
+                  onClick={() => {
+                    if (!useRealWebcam) {
+                      handleSelectInputMode("webcam");
+                    } else {
+                      handleSelectInputMode("simulator");
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${useRealWebcam ? cameraStreamStatus === "error" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700" : "bg-indigo-600 text-white shadow-xs" : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"}`}
+                >
                   <Layers className="w-3.5 h-3.5" />
                   <span>
                     {useRealWebcam ? cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission" ? "Connecting..." : cameraStreamStatus === "error" ? "Webcam Error" : "Using Webcam" : "Simulation Mode"}
                   </span>
                 </button>
 
-                {cameraStreamStatus === "error" && useRealWebcam && <button
-      onClick={handleRetryCamera}
-      disabled={isRetrying}
-      className="px-2.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
-      title="Retry Camera Initialization"
-    >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isRetrying ? "animate-spin" : ""}`} />
+                {cameraStreamStatus === "error" && useRealWebcam && (
+                  <button
+                    onClick={handleRetryCamera}
+                    disabled={cameraStreamStatus === "requesting_permission"}
+                    className="px-2.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                    title="Retry Camera Initialization"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
                     <span>Retry</span>
-                  </button>}
+                  </button>
+                )}
 
                 <button
       onClick={() => setShowMesh(!showMesh)}
@@ -1959,36 +1729,37 @@ const LiveTranslateView = ({
               </div>
             </div>
 
-            {(permissionError || cameraError) && <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
+            {cameraError && (
+              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
                 <div className="flex items-start space-x-2.5">
                   <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
                   <div>
                     <span className="font-bold">
-                      {cameraError ? cameraError.title : "Camera Permission Notice"}:
+                      {cameraError.title || "Camera Status Notice"}:
                     </span>{" "}
-                    <span>{cameraError ? cameraError.message : permissionError}</span>
+                    <span>{cameraError.message}</span>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
                   <button
-      onClick={handleRetryCamera}
-      disabled={isRetrying}
-      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] flex items-center space-x-1 transition-colors cursor-pointer"
-    >
-                    <RefreshCw className={`w-3 h-3 ${isRetrying ? "animate-spin" : ""}`} />
+                    onClick={handleRetryCamera}
+                    disabled={cameraStreamStatus === "requesting_permission"}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] flex items-center space-x-1 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
                     <span>Retry</span>
                   </button>
                   <button
-      onClick={() => {
-        setPermissionError(null);
-        setCameraError(null);
-      }}
-      className="px-2 py-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold text-[11px] cursor-pointer"
-    >
+                    onClick={() => {
+                      setCameraError(null);
+                    }}
+                    className="px-2 py-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold text-[11px] cursor-pointer"
+                  >
                     Dismiss
                   </button>
                 </div>
-              </div>}
+              </div>
+            )}
           </div>
 
           {
