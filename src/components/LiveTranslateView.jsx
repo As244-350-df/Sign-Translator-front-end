@@ -128,13 +128,6 @@ const LiveTranslateView = ({
   const [isPlayingSignAnimation, setIsPlayingSignAnimation] = useState(true);
   const [animationSpeed, setAnimationSpeed] = useState(1);
   const [selectedSignCategory, setSelectedSignCategory] = useState("all");
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const handTrackerRef = useRef(new RealtimeHandTracker());
-  const recorderRef = useRef(new LiveSessionRecorder());
-  const animationFrameId = useRef(null);
-  const speechListenerRef = useRef(null);
-  const mediaStreamRef = useRef(null);
   const [cameraZoom, setCameraZoom] = useState(1);
   const [cameraPan, setCameraPan] = useState({ x: 0, y: 0 });
   const [showAlignmentGuide, setShowAlignmentGuide] = useState(false);
@@ -150,6 +143,33 @@ const LiveTranslateView = ({
     handFramedScore: 0,
     statusText: "Manual Zoom & Pan"
   });
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const handTrackerRef = useRef(new RealtimeHandTracker());
+  const recorderRef = useRef(new LiveSessionRecorder());
+  const animationFrameId = useRef(null);
+  const speechListenerRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+
+  // Keep latest mutable props & states in refs so loops never have to teardown/restart
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const showMeshRef = useRef(showMesh);
+  showMeshRef.current = showMesh;
+
+  const showAlignmentGuideRef = useRef(showAlignmentGuide);
+  showAlignmentGuideRef.current = showAlignmentGuide;
+
+  const autoSpeakOnCommitRef = useRef(autoSpeakOnCommit);
+  autoSpeakOnCommitRef.current = autoSpeakOnCommit;
+
+  const inputSourceModeRef = useRef(inputSourceMode);
+  inputSourceModeRef.current = inputSourceMode;
+
+  const cameraStreamStatusRef = useRef(cameraStreamStatus);
+  cameraStreamStatusRef.current = cameraStreamStatus;
   useEffect(() => {
     if (typeof settings.autoCenterCamera === "boolean") {
       setIsAutoCentering(settings.autoCenterCamera);
@@ -692,14 +712,17 @@ const LiveTranslateView = ({
     let lastActiveSignKey = "";
     let lastDetectionTime = 0;
     let lastReportedGesture = "";
-    const DETECTION_INTERVAL_MS = 25;
+    const DETECTION_INTERVAL_MS = 35;
+
     const render = (time) => {
       if (document.hidden) {
         animationFrameId.current = requestAnimationFrame(render);
         return;
       }
       try {
-        if (inputSourceMode === "webcam" && cameraStreamStatus !== "active") {
+        const currentMode = inputSourceModeRef.current;
+        const currentStatus = cameraStreamStatusRef.current;
+        if (currentMode === "webcam" && currentStatus !== "active") {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           animationFrameId.current = requestAnimationFrame(render);
           return;
@@ -710,7 +733,9 @@ const LiveTranslateView = ({
           lastDetectionTime = now;
         }
         const detection = tracker.processFrame(time, shouldRunDetection);
-        if (now - lastTelemetryTime > 350) {
+
+        // Throttle UI telemetry state updates (only update on gesture changes or every 450ms)
+        if (now - lastTelemetryTime > 450 || (detection.gesture && detection.gesture !== lastReportedGesture)) {
           lastTelemetryTime = now;
           lastReportedGesture = detection.gesture;
           if (detection.autoCentering && detection.autoCentering.enabled) {
@@ -746,19 +771,19 @@ const LiveTranslateView = ({
               type: "word"
             }
           ]);
-          if (autoSpeakOnCommit) {
-            speakText(textOutput, settings.speechVoiceRate, settings.speechVoicePitch);
+          if (autoSpeakOnCommitRef.current) {
+            speakText(textOutput, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
           }
         }
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (showMesh) {
+        if (showMeshRef.current) {
           tracker.draw(ctx, detection, {
             color: detection.isRealHandDetected ? "#10B981" : "#6366F1",
             jointColor: "#38BDF8",
             showBoundingBox: true,
             showHUD: true,
-            showAlignmentGuide,
-            labelPrefix: `${settings.primarySignLanguage} MediaPipe CV`
+            showAlignmentGuide: showAlignmentGuideRef.current,
+            labelPrefix: `${settingsRef.current.primarySignLanguage || "ASL"} MediaPipe CV`
           });
         }
       } catch (err) {
@@ -776,15 +801,7 @@ const LiveTranslateView = ({
   }, [
     isCameraActive,
     translationMode,
-    inputSourceMode,
-    showMesh,
-    showAlignmentGuide,
-    useRealWebcam,
-    cameraStreamStatus,
-    autoSpeakOnCommit,
-    settings.primarySignLanguage,
-    settings.speechVoiceRate,
-    settings.speechVoicePitch
+    inputSourceMode
   ]);
   const handleTestSign = (signKey) => {
     handTrackerRef.current.forceSign(signKey);

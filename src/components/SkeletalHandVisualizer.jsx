@@ -1,6 +1,7 @@
-import { useRef, useMemo } from "react";
+import { useRef, useMemo, useEffect } from "react";
 import { motion } from "motion/react";
 import { FINGER_METADATA } from "../utils/fingerMapping";
+
 const SkeletalHandVisualizer = ({
   profile,
   selectedFingerFilter = null,
@@ -11,6 +12,8 @@ const SkeletalHandVisualizer = ({
 }) => {
   const prevProfileRef = useRef(profile);
   const prevTimeRef = useRef(performance.now());
+  const lastEmittedMetricsRef = useRef(null);
+
   const { fingerSprings, overallSpring, velocityMetrics } = useMemo(() => {
     const now = performance.now();
     const dtSeconds = Math.max(0.08, Math.min(1.8, (now - prevTimeRef.current) / 1e3));
@@ -70,17 +73,24 @@ const SkeletalHandVisualizer = ({
       effectiveStiffness: overall.stiffness,
       effectiveDamping: overall.damping,
       effectiveMass: overall.mass,
-      label: normalizedScore > 0.65 ? "\u26A1 Snappy (Fast Velocity)" : normalizedScore > 0.35 ? "\u{1F3AF} Balanced Kinematics" : "\u23F1 Deliberate (Weighted)"
+      label: normalizedScore > 0.65 ? "⚡ Snappy (Fast Velocity)" : normalizedScore > 0.35 ? "🎯 Balanced Kinematics" : "⏱️ Deliberate (Weighted)"
     };
-    if (onVelocityCalculated) {
-      onVelocityCalculated(metrics);
-    }
     return {
       fingerSprings: fingerSpringMap,
       overallSpring: overall,
       velocityMetrics: metrics
     };
-  }, [profile, velocityMode, onVelocityCalculated]);
+  }, [profile, velocityMode]);
+
+  useEffect(() => {
+    if (onVelocityCalculated && velocityMetrics) {
+      const prev = lastEmittedMetricsRef.current;
+      if (!prev || prev.effectiveStiffness !== velocityMetrics.effectiveStiffness || prev.effectiveDamping !== velocityMetrics.effectiveDamping) {
+        lastEmittedMetricsRef.current = velocityMetrics;
+        onVelocityCalculated(velocityMetrics);
+      }
+    }
+  }, [velocityMetrics, onVelocityCalculated]);
   const wrist = { x: 160, y: 245 };
   const thumbCmc = { x: 112, y: 202 };
   const indexMcp = { x: 124, y: 142 };

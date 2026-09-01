@@ -41,11 +41,12 @@ const FreeFingerController = ({
     }
   }, [currentPose]);
   useEffect(() => {
+    if (!showPhysicsAdvanced) return;
     const interval = setInterval(() => {
       setPhysicsTelemetry(handTracker.getPhysicsTelemetry());
-    }, 150);
+    }, 600);
     return () => clearInterval(interval);
-  }, [handTracker]);
+  }, [handTracker, showPhysicsAdvanced]);
   const updateFinger = (fingerKey, val) => {
     const updated = {
       ...pose,
