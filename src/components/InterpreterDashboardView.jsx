@@ -14,6 +14,63 @@ import {
   Zap
 } from "lucide-react";
 import { api } from "../utils/api";
+const IncomingCallAlertCard = ({ onAccept, onDecline }) => {
+  const [countdown, setCountdown] = useState(28);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          onDecline();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [onDecline]);
+
+  return (
+    <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-6 rounded-3xl text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
+      <div className="flex items-center space-x-4">
+        <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 animate-bounce">
+          <PhoneIncoming className="w-7 h-7 text-white" />
+        </div>
+        <div>
+          <div className="flex items-center space-x-2">
+            <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider">
+              ⚡ Urgent On-Demand Match
+            </span>
+            <span className="text-xs font-mono font-bold bg-black/30 px-2 py-0.5 rounded-full">
+              Auto-Cascade in {countdown}s
+            </span>
+          </div>
+          <h2 className="text-lg font-bold mt-1">Stanford Hospital Emergency Room</h2>
+          <p className="text-xs text-emerald-100">
+            Medical Triage • ASL Required • Guaranteed Rate: $75.00/hr ($1.25/min)
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center space-x-3 self-end md:self-center">
+        <button
+          onClick={onDecline}
+          className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer"
+        >
+          Decline
+        </button>
+        <button
+          onClick={onAccept}
+          className="px-6 py-2.5 rounded-xl bg-white text-emerald-700 hover:bg-slate-100 text-xs font-extrabold shadow-lg transition-all active:scale-95 flex items-center space-x-1.5 cursor-pointer"
+        >
+          <Video className="w-4 h-4" />
+          <span>Accept & Join Room</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const InterpreterDashboardView = ({
   user,
   settings,
@@ -21,7 +78,6 @@ const InterpreterDashboardView = ({
 }) => {
   const [isOnline, setIsOnline] = useState(true);
   const [incomingCall, setIncomingCall] = useState(true);
-  const [incomingCountdown, setIncomingCountdown] = useState(28);
   const [payoutSuccess, setPayoutSuccess] = useState(false);
   const earningsData = {
     availableBalance: 420.5,
@@ -57,21 +113,6 @@ const InterpreterDashboardView = ({
       rate: "$90.00/hr"
     }
   ];
-  useEffect(() => {
-    let timer;
-    if (incomingCall && incomingCountdown > 0) {
-      timer = setInterval(() => {
-        setIncomingCountdown((prev) => {
-          if (prev <= 1) {
-            setIncomingCall(false);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1e3);
-    }
-    return () => clearInterval(timer);
-  }, [incomingCall, incomingCountdown]);
   const handleToggleOnline = async () => {
     const next = !isOnline;
     setIsOnline(next);
@@ -134,49 +175,16 @@ const InterpreterDashboardView = ({
         </div>
       </div>
 
-      {
-    /* Incoming Urgent Call Alert Card (If Active & Online) */
-  }
-      {isOnline && incomingCall && <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-6 rounded-3xl text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in slide-in-from-top duration-300">
-          <div className="flex items-center space-x-4">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 animate-bounce">
-              <PhoneIncoming className="w-7 h-7 text-white" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider">
-                  ⚡ Urgent On-Demand Match
-                </span>
-                <span className="text-xs font-mono font-bold bg-black/30 px-2 py-0.5 rounded-full">
-                  Auto-Cascade in {incomingCountdown}s
-                </span>
-              </div>
-              <h2 className="text-lg font-bold mt-1">Stanford Hospital Emergency Room</h2>
-              <p className="text-xs text-emerald-100">
-                Medical Triage • ASL Required • Guaranteed Rate: $75.00/hr ($1.25/min)
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3 self-end md:self-center">
-            <button
-    onClick={() => setIncomingCall(false)}
-    className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors"
-  >
-              Decline
-            </button>
-            <button
-    onClick={() => {
-      setIncomingCall(false);
-      onAcceptIncomingCall();
-    }}
-    className="px-6 py-2.5 rounded-xl bg-white text-emerald-700 hover:bg-slate-100 text-xs font-extrabold shadow-lg transition-all active:scale-95 flex items-center space-x-1.5"
-  >
-              <Video className="w-4 h-4" />
-              <span>Accept & Join Room</span>
-            </button>
-          </div>
-        </div>}
+      {/* Incoming Urgent Call Alert Card (If Active & Online) */}
+      {isOnline && incomingCall && (
+        <IncomingCallAlertCard
+          onAccept={() => {
+            setIncomingCall(false);
+            onAcceptIncomingCall();
+          }}
+          onDecline={() => setIncomingCall(false)}
+        />
+      )}
 
       {
     /* KPI Stats Grid */

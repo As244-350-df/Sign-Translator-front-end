@@ -16,10 +16,23 @@ class MediaPipeHandTracker {
   lastDetectionTime = 0;
   lastMediaPipeTimestamp = 0;
   cachedResult = null;
-  detectionIntervalMs = 45;
-  // ~22 FPS vision inference - silky smooth without thread starvation
+  detectionIntervalMs = 50;
+  // ~20 FPS vision inference - silky smooth without thread starvation
   isDetecting = false;
+
+  // Lightweight offscreen downsampling canvas for zero-freeze vision on high-res / 4K / large screens
+  downsampleCanvas = null;
+  downsampleCtx = null;
+  downsampleWidth = 480;
+  downsampleHeight = 360;
+
   constructor() {
+    if (typeof document !== "undefined") {
+      this.downsampleCanvas = document.createElement("canvas");
+      this.downsampleCanvas.width = this.downsampleWidth;
+      this.downsampleCanvas.height = this.downsampleHeight;
+      this.downsampleCtx = this.downsampleCanvas.getContext("2d", { willReadFrequently: true, alpha: false });
+    }
   }
   static getInstance() {
     if (!MediaPipeHandTracker.instance) {
@@ -150,22 +163,30 @@ class MediaPipeHandTracker {
     const t0 = performance.now();
     let result = null;
     try {
-      result = this.landmarker.detectForVideo(video, safeTimestamp);
-    } catch (e) {
-      try {
-        const fallbackTs = this.lastMediaPipeTimestamp + 2;
-        this.lastMediaPipeTimestamp = fallbackTs;
-        result = this.landmarker.detectForVideo(video, fallbackTs);
-      } catch {
+      let inputElement = video;
+      if (this.downsampleCtx && video.videoWidth > 0 && video.videoHeight > 0) {
+        const aspect = video.videoWidth / video.videoHeight;
+        const targetW = 400;
+        const targetH = Math.max(200, Math.round(targetW / (aspect || 1.333)));
+        if (this.downsampleCanvas.width !== targetW || this.downsampleCanvas.height !== targetH) {
+          this.downsampleCanvas.width = targetW;
+          this.downsampleCanvas.height = targetH;
+        }
+        this.downsampleCtx.drawImage(video, 0, 0, targetW, targetH);
+        inputElement = this.downsampleCanvas;
       }
+      result = this.landmarker.detectForVideo(inputElement, safeTimestamp);
+    } catch (e) {
+      // Graceful recovery without recursive double execution
+      this.lastMediaPipeTimestamp = safeTimestamp;
     } finally {
       this.isDetecting = false;
     }
     this.lastInferenceMs = Math.round(performance.now() - t0);
-    if (this.lastInferenceMs > 35) {
-      this.detectionIntervalMs = Math.min(100, Math.max(45, Math.round(this.lastInferenceMs * 1.5)));
+    if (this.lastInferenceMs > 25) {
+      this.detectionIntervalMs = Math.min(100, Math.max(50, Math.round(this.lastInferenceMs * 1.6)));
     } else {
-      this.detectionIntervalMs = 45;
+      this.detectionIntervalMs = 50;
     }
     if (!result || !result.landmarks || result.landmarks.length === 0) {
       this.prevLandmarks = [];

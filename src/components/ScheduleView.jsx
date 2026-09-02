@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -39,11 +39,13 @@ const ScheduleView = ({
       }
     }
   };
-  const filteredBookings = bookings.filter((b) => {
-    if (activeFilter === "upcoming") return b.status === "upcoming" || b.status === "in_progress";
-    if (activeFilter === "completed") return b.status === "completed";
-    return true;
-  });
+  const filteredBookings = useMemo(() => {
+    return bookings.filter((b) => {
+      if (activeFilter === "upcoming") return b.status === "upcoming" || b.status === "in_progress";
+      if (activeFilter === "completed") return b.status === "completed";
+      return true;
+    });
+  }, [bookings, activeFilter]);
   return <div className="space-y-6">
       
       {

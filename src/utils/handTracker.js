@@ -701,6 +701,8 @@ class RealtimeHandTracker {
     mode: "Biological"
   };
   useTensorFlowClassifier = true;
+  lastTfTelemetry = null;
+  lastTfTelemetryTime = 0;
   constructor() {
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCanvas.width = 160;
@@ -1167,7 +1169,14 @@ class RealtimeHandTracker {
         statusText
       },
       physicsTelemetry: { ...this.physicsTelemetry },
-      tfTelemetry: tfjsClassifier.getTelemetry()
+      tfTelemetry: (() => {
+        const now = performance.now();
+        if (!this.lastTfTelemetry || now - this.lastTfTelemetryTime > 1000) {
+          this.lastTfTelemetry = tfjsClassifier.getTelemetry();
+          this.lastTfTelemetryTime = now;
+        }
+        return this.lastTfTelemetry;
+      })()
     };
   }
   // 1-Euro Adaptive Low-Pass Filter Algorithm for Jitter-Free Low-Latency Tracking

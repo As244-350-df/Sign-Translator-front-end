@@ -1,44 +1,8 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  Camera,
-  CameraOff,
-  Volume2,
-  VolumeX,
-  Mic,
-  Copy,
-  Check,
-  RotateCcw,
-  Sparkles,
-  HandMetal,
-  Layers,
-  HelpCircle,
-  Keyboard,
-  ChevronDown,
-  Circle,
-  Activity,
-  Plus,
-  Trash2,
-  BookOpen,
-  ZoomIn,
-  ZoomOut,
-  Target,
-  Sliders,
-  Focus,
-  Move,
-  Crosshair,
-  Loader2,
-  Film,
-  AlertCircle,
-  AlertTriangle,
-  RefreshCw,
-  ShieldAlert,
-  VideoOff,
-  ExternalLink,
-  X
-} from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { AlertTriangle, ExternalLink, HelpCircle } from "lucide-react";
 import { SIGN_LANGUAGES } from "../data/mockData";
 import { speakText, SpeechToSignListener } from "../utils/speech";
-import { RealtimeHandTracker, SIGN_DICTIONARY } from "../utils/handTracker";
+import { SIGN_DICTIONARY } from "../utils/handTracker";
 import { LiveSessionRecorder } from "../utils/mediaRecorder";
 import { RecordedVideoModal } from "./RecordedVideoModal";
 import { AddSignModal } from "./AddSignModal";
@@ -47,12 +11,17 @@ import { TensorFlowEngineHUD } from "./TensorFlowEngineHUD";
 import { CameraDiagnosticOverlay } from "./CameraDiagnosticOverlay";
 import { SignLanguageAvatar } from "./SignLanguageAvatar";
 import { VideoSourcePanel } from "./VideoSourcePanel";
-import { RecordingControls } from "./RecordingControls";
-import { RecordingDurationPill } from "./RecordingDurationPill";
-import { LiveGestureOverlayHUD } from "./LiveGestureOverlayHUD";
-import { syntheticVideoEngine } from "../utils/demoVideoFeeds";
 import { isInsideIframe, getSafeCurrentUrl } from "../utils/environment";
-const LiveTranslateView = ({
+import { useCameraHandTracking } from "../hooks/useCameraHandTracking";
+
+import { LiveTranslateHeader } from "./live-translate/LiveTranslateHeader";
+import { SignDictionaryPanel } from "./live-translate/SignDictionaryPanel";
+import { LiveTranscriptBox } from "./live-translate/LiveTranscriptBox";
+import { TextToSignInputPanel } from "./live-translate/TextToSignInputPanel";
+import { CameraToolbar } from "./live-translate/CameraToolbar";
+import { CameraFeedStage } from "./live-translate/CameraFeedStage";
+
+export const LiveTranslateView = ({
   settings,
   onUpdateSettings,
   onOpenLiveCall,
@@ -60,24 +29,9 @@ const LiveTranslateView = ({
   onOpenTutorial
 }) => {
   const [translationMode, setTranslationMode] = useState("sign_to_text");
-  const [inputSourceMode, setInputSourceMode] = useState("webcam");
-  const [uploadedVideoUrl, setUploadedVideoUrl] = useState(null);
-  const [uploadedFileName, setUploadedFileName] = useState(null);
-  const [activeDemoId, setActiveDemoId] = useState("HELLO");
-  const [isPlayingUploadedVideo, setIsPlayingUploadedVideo] = useState(true);
-  const [videoPlaybackRate, setVideoPlaybackRate] = useState(1);
-  const isInIframe = isInsideIframe();
   const [isCameraActive, setIsCameraActive] = useState(true);
-  const [useRealWebcam, setUseRealWebcam] = useState(true);
-  const [cameraStreamStatus, setCameraStreamStatus] = useState("idle");
-  const [cameraNoticeMessage, setCameraNoticeMessage] = useState(null);
-  const [cameraError, setCameraError] = useState(null);
-  const [hardwarePermissionStatus, setHardwarePermissionStatus] = useState("checking");
-  const [activeStreamResolution, setActiveStreamResolution] = useState(null);
   const [showDiagnosticsOverlay, setShowDiagnosticsOverlay] = useState(false);
-  const [isDarkFeedWarning, setIsDarkFeedWarning] = useState(false);
-  const [showMesh, setShowMesh] = useState(settings.gestureTrackingOverlay);
-  const [autoSpeakOnCommit, setAutoSpeakOnCommit] = useState(false);
+  const [isDarkFeedWarning] = useState(false);
   const [showAddSignModal, setShowAddSignModal] = useState(false);
   const [showFreeFingerStudio, setShowFreeFingerStudio] = useState(true);
   const [dictionaryMap, setDictionaryMap] = useState(SIGN_DICTIONARY);
@@ -99,468 +53,94 @@ const LiveTranslateView = ({
   const [isPlayingSignAnimation, setIsPlayingSignAnimation] = useState(true);
   const [animationSpeed, setAnimationSpeed] = useState(1);
   const [selectedSignCategory, setSelectedSignCategory] = useState("all");
-  const [cameraZoom, setCameraZoom] = useState(1);
-  const [cameraPan, setCameraPan] = useState({ x: 0, y: 0 });
-  const [showAlignmentGuide, setShowAlignmentGuide] = useState(false);
-  const [showZoomMenu, setShowZoomMenu] = useState(false);
-  const [calibrationScale, setCalibrationScale] = useState(1);
-  const [isAutoCentering, setIsAutoCentering] = useState(settings.autoCenterCamera ?? false);
 
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const handTrackerRef = useRef(new RealtimeHandTracker());
+  const isInIframe = isInsideIframe();
   const recorderRef = useRef(new LiveSessionRecorder());
-  const animationFrameId = useRef(null);
   const speechListenerRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const cameraRequestInProgressRef = useRef(false);
 
-  // Keep latest mutable props & states in refs so loops never have to teardown/restart
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-
-  const showMeshRef = useRef(showMesh);
-  showMeshRef.current = showMesh;
-
-  const showAlignmentGuideRef = useRef(showAlignmentGuide);
-  showAlignmentGuideRef.current = showAlignmentGuide;
-
-  const autoSpeakOnCommitRef = useRef(autoSpeakOnCommit);
-  autoSpeakOnCommitRef.current = autoSpeakOnCommit;
-
-  const inputSourceModeRef = useRef(inputSourceMode);
-  inputSourceModeRef.current = inputSourceMode;
-
-  const cameraStreamStatusRef = useRef(cameraStreamStatus);
-  cameraStreamStatusRef.current = cameraStreamStatus;
-  useEffect(() => {
-    if (typeof settings.autoCenterCamera === "boolean") {
-      setIsAutoCentering(settings.autoCenterCamera);
-      handTrackerRef.current.setAutoCenter(settings.autoCenterCamera);
-    }
-  }, [settings.autoCenterCamera]);
-  useEffect(() => {
-    handTrackerRef.current.setAutoCenter(isAutoCentering);
-  }, [isAutoCentering]);
-  useEffect(() => {
-    if (!isAutoCentering) {
-      handTrackerRef.current.setZoom(cameraZoom, cameraPan.x, cameraPan.y);
-    }
-    handTrackerRef.current.setCalibrationScale(calibrationScale);
-    if (mediaStreamRef.current) {
-      const track = mediaStreamRef.current.getVideoTracks()[0];
-      if (track) {
-        try {
-          const caps = track.getCapabilities?.();
-          if (caps && caps.zoom) {
-            const minZ = caps.zoom.min || 1;
-            const maxZ = caps.zoom.max || 3.5;
-            const targetZ = Math.max(minZ, Math.min(maxZ, cameraZoom));
-            track.applyConstraints?.({
-              advanced: [{ zoom: targetZ }]
-            }).catch(() => {
-            });
-          }
-        } catch (e) {
-        }
+  const handleRecognizedDetection = useCallback((detection) => {
+    const textOutput = detection.signMeaning.translatedText;
+    setFullSentence((prev) => {
+      if (!prev || prev.trim() === "") {
+        return textOutput.charAt(0).toUpperCase() + textOutput.slice(1);
       }
-    }
-  }, [cameraZoom, cameraPan, calibrationScale, isAutoCentering]);
+      return `${prev.trim()} ${textOutput}`;
+    });
+    setRecognizedSigns((prev) => [
+      ...prev.slice(-14),
+      {
+        text: `${detection.signMeaning?.symbol} ${detection.signMeaning?.translatedText.toUpperCase()}`,
+        confidence: detection.confidence,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        hand: "right",
+        type: "word"
+      }
+    ]);
+  }, []);
+
+  const tracking = useCameraHandTracking({
+    settings,
+    isCameraActive,
+    setIsCameraActive,
+    translationMode,
+    isInIframe,
+    onRecognizedSign: handleRecognizedDetection
+  });
+
+  const currentLanguage =
+    SIGN_LANGUAGES.find((l) => l.code === settings.primarySignLanguage) || SIGN_LANGUAGES[0];
+
   const handleToggleAutoCenter = () => {
-    const nextVal = !isAutoCentering;
-    setIsAutoCentering(nextVal);
-    handTrackerRef.current.setAutoCenter(nextVal);
+    const nextVal = !tracking.isAutoCentering;
+    tracking.setIsAutoCentering(nextVal);
+    tracking.handTrackerRef.current.setAutoCenter(nextVal);
     onUpdateSettings({ autoCenterCamera: nextVal });
   };
+
   const handleZoomIn = () => {
-    setCameraZoom((prev) => Math.min(3.5, Number((prev + 0.25).toFixed(2))));
+    tracking.setCameraZoom((prev) => Math.min(3.5, Number((prev + 0.25).toFixed(2))));
   };
   const handleZoomOut = () => {
-    setCameraZoom((prev) => Math.max(1, Number((prev - 0.25).toFixed(2))));
+    tracking.setCameraZoom((prev) => Math.max(1, Number((prev - 0.25).toFixed(2))));
   };
   const handleSetZoom = (z) => {
-    setCameraZoom(Math.max(1, Math.min(3.5, Number(z.toFixed(2)))));
+    tracking.setCameraZoom(Math.max(1, Math.min(3.5, Number(z.toFixed(2)))));
   };
   const handleResetZoom = () => {
-    setCameraZoom(1);
-    setCameraPan({ x: 0, y: 0 });
-    setCalibrationScale(1);
+    tracking.setCameraZoom(1);
+    tracking.setCameraPan({ x: 0, y: 0 });
+    tracking.setCalibrationScale(1);
   };
-  const handlePanNudge = (dx, dy) => {
-    setCameraPan((prev) => ({
+  const handlePanNudge = (dx, dy, isCenter = false) => {
+    if (isCenter) {
+      tracking.setCameraPan({ x: 0, y: 0 });
+      return;
+    }
+    tracking.setCameraPan((prev) => ({
       x: Math.max(-1, Math.min(1, Number((prev.x + dx).toFixed(2)))),
       y: Math.max(-1, Math.min(1, Number((prev.y + dy).toFixed(2))))
     }));
   };
-  const currentLanguage = SIGN_LANGUAGES.find((l) => l.code === settings.primarySignLanguage) || SIGN_LANGUAGES[0];
 
-  const requestCameraAccess = async (forceNew = false) => {
-    if (cameraRequestInProgressRef.current) return;
-
-    // Fast return if stream is already actively running and live
-    if (!forceNew && mediaStreamRef.current) {
-      const liveTrack = mediaStreamRef.current.getVideoTracks().find((t) => t.readyState === "live");
-      if (liveTrack && liveTrack.enabled) {
-        if (videoRef.current && videoRef.current.srcObject !== mediaStreamRef.current) {
-          videoRef.current.srcObject = mediaStreamRef.current;
-          videoRef.current.play().catch(() => {});
-        }
-        setCameraStreamStatus("active");
-        setCameraError(null);
-        return;
-      }
-    }
-
-    cameraRequestInProgressRef.current = true;
-    setCameraStreamStatus("requesting_permission");
-    setCameraError(null);
-
-    try {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        throw new Error("Webcam API is not supported in this browser environment.");
-      }
-
-      // Fast single-pass getUserMedia with immediate simple fallback
-      let stream = null;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: settings.cameraFacing ? { ideal: settings.cameraFacing } : "user"
-          },
-          audio: false
-        });
-      } catch (idealErr) {
-        console.warn("[LiveTranslateView] High-res constraint rejected, falling back to basic video:", idealErr);
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      }
-
-      if (!stream) {
-        throw new Error("Could not acquire video stream from camera.");
-      }
-
-      if (mediaStreamRef.current && mediaStreamRef.current !== stream) {
-        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      }
-
-      mediaStreamRef.current = stream;
-      setHardwarePermissionStatus("granted");
-
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        const s = videoTrack.getSettings ? videoTrack.getSettings() : null;
-        if (s?.width && s?.height) {
-          setActiveStreamResolution({ width: s.width, height: s.height });
-        }
-        videoTrack.onended = () => {
-          console.warn("[LiveTranslateView] Video track ended / disconnected.");
-          setCameraStreamStatus("error");
-          setCameraError({
-            type: "disconnected",
-            title: "Camera Disconnected",
-            message: "The camera stream ended or the device was disconnected.",
-            tips: 'Click "Retry Camera Stream" to reconnect.',
-            canRetry: true
-          });
-        };
-      }
-
-      if (videoRef.current) {
-        videoRef.current.muted = true;
-        videoRef.current.defaultMuted = true;
-        videoRef.current.setAttribute("muted", "");
-        videoRef.current.setAttribute("playsinline", "true");
-        videoRef.current.setAttribute("webkit-playsinline", "true");
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch((e) => console.warn("[LiveTranslateView] Video play note:", e));
-      }
-
-      setCameraStreamStatus("active");
-      setCameraError(null);
-    } catch (err) {
-      console.warn("[LiveTranslateView] Camera initialization error:", err);
-      let errType = "unknown";
-      let title = "Camera Connection Failed";
-      let message = err?.message || "Unable to access webcam.";
-      let tips = "Please ensure camera permissions are allowed in your browser settings.";
-
-      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
-        errType = "permission_denied";
-        setHardwarePermissionStatus("denied");
-        title = "Camera Permission Blocked";
-        message = "Camera access was denied by your browser or operating system.";
-        tips = isInIframe
-          ? 'Preview iFrame detected: Browsers block camera permission dialogs inside embedded frames. Click "Open in New Tab" below to grant camera access directly.'
-          : 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
-      } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
-        errType = "not_found";
-        title = "Camera Not Detected";
-        message = "No video capture hardware was found on your device.";
-        tips = "Connect a webcam or check your system camera privacy settings.";
-      } else if (err?.name === "NotReadableError" || err?.name === "TrackStartError") {
-        errType = "in_use";
-        title = "Camera Already in Use";
-        message = "Your camera is currently locked by another application or browser tab.";
-        tips = 'Close other video calling apps (Zoom, Meet, Teams) or browser tabs using the camera, then click "Retry Camera Stream".';
-      } else if (err?.name === "SecurityError") {
-        errType = "security";
-        title = "Security Restriction";
-        message = "Camera access requires HTTPS or localhost.";
-        tips = isInIframe
-          ? 'Preview iFrame restriction: Click "Open in New Tab" below to run the app directly with full camera permissions.'
-          : "Ensure you are accessing this application via HTTPS or a trusted local host.";
-      }
-
-      setCameraStreamStatus("error");
-      setCameraError({
-        type: errType,
-        title,
-        message,
-        tips,
-        canRetry: true
-      });
-    } finally {
-      cameraRequestInProgressRef.current = false;
-    }
-  };
-
-  const handleRetryCamera = () => {
-    setInputSourceMode("webcam");
-    setUseRealWebcam(true);
-    setIsCameraActive(true);
-    requestCameraAccess(true);
-  };
-
-  const handleSelectInputMode = (mode) => {
-    setInputSourceMode(mode);
-    if (mode === "webcam") {
-      syntheticVideoEngine.stopStream();
-      setUseRealWebcam(true);
-      setIsCameraActive(true);
-      requestCameraAccess(false);
-    } else if (mode === "simulator") {
-      syntheticVideoEngine.stopStream();
-      setUseRealWebcam(false);
-      setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-        videoRef.current.removeAttribute("src");
-      }
-    } else if (mode === "video_upload") {
-      syntheticVideoEngine.stopStream();
-      setUseRealWebcam(false);
-      setIsCameraActive(true);
-      if (videoRef.current && uploadedVideoUrl) {
-        videoRef.current.srcObject = null;
-        videoRef.current.src = uploadedVideoUrl;
-        videoRef.current.loop = true;
-        videoRef.current.playbackRate = videoPlaybackRate;
-        videoRef.current.play().catch(() => {});
-      }
-    } else if (mode === "demo_clips") {
-      setUseRealWebcam(false);
-      setIsCameraActive(true);
-      const stream = syntheticVideoEngine.generateStream(activeDemoId);
-      if (videoRef.current && stream) {
-        videoRef.current.removeAttribute("src");
-        videoRef.current.srcObject = stream;
-        videoRef.current.play().catch(() => {});
-      }
-      handTrackerRef.current.forceSign(activeDemoId);
-    }
-  };
-
-  const handleUploadVideo = (file) => {
-    if (uploadedVideoUrl) {
-      URL.revokeObjectURL(uploadedVideoUrl);
-    }
-    const url = URL.createObjectURL(file);
-    setUploadedVideoUrl(url);
-    setUploadedFileName(file.name);
-    setInputSourceMode("video_upload");
-    setUseRealWebcam(false);
-    setIsCameraActive(true);
-    setIsPlayingUploadedVideo(true);
-    if (videoRef.current) {
-      syntheticVideoEngine.stopStream();
-      videoRef.current.srcObject = null;
-      videoRef.current.src = url;
-      videoRef.current.loop = true;
-      videoRef.current.playbackRate = videoPlaybackRate;
-      videoRef.current.play().catch((e) => console.warn("[LiveTranslateView] Video play note:", e));
-    }
-  };
-
-  const handleSelectDemoClip = (preset) => {
-    setActiveDemoId(preset.id);
-    setInputSourceMode("demo_clips");
-    setUseRealWebcam(false);
-    setIsCameraActive(true);
-    const stream = syntheticVideoEngine.generateStream(preset.id);
-    if (videoRef.current && stream) {
-      videoRef.current.removeAttribute("src");
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch((e) => console.warn("[LiveTranslateView] Demo stream play note:", e));
-    }
-    handTrackerRef.current.forceSign(preset.id);
-  };
-
-  const handleTogglePlayPauseUploadedVideo = () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play().catch(() => {});
-      setIsPlayingUploadedVideo(true);
-    } else {
-      videoRef.current.pause();
-      setIsPlayingUploadedVideo(false);
-    }
-  };
-
-  const handleRestartUploadedVideo = () => {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = 0;
-    videoRef.current.play().catch(() => {});
-    setIsPlayingUploadedVideo(true);
-  };
-
-  const handleChangePlaybackRate = (rate) => {
-    setVideoPlaybackRate(rate);
-    if (videoRef.current) {
-      videoRef.current.playbackRate = rate;
-    }
-  };
-
-  // Camera stream lifecycle effect
-  useEffect(() => {
-    let isMounted = true;
-    if (isCameraActive && useRealWebcam && inputSourceMode === "webcam") {
-      requestCameraAccess(false);
-    } else if (!isCameraActive || !useRealWebcam) {
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => (t.enabled = false));
-      }
-      setCameraStreamStatus("idle");
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isCameraActive, useRealWebcam, inputSourceMode]);
-
-  // Video element binding effect
-  useEffect(() => {
-    if (useRealWebcam && inputSourceMode === "webcam" && videoRef.current && mediaStreamRef.current) {
-      if (videoRef.current.srcObject !== mediaStreamRef.current) {
-        videoRef.current.srcObject = mediaStreamRef.current;
-        videoRef.current.play().catch(() => {});
-      }
-    }
-  }, [useRealWebcam, inputSourceMode, cameraStreamStatus]);
-  useEffect(() => {
-    if (!isCameraActive || translationMode !== "sign_to_text") return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d", { alpha: true });
-    if (!ctx) return;
-    const tracker = handTrackerRef.current;
-    if (videoRef.current && (inputSourceMode === "webcam" || inputSourceMode === "video_upload" || inputSourceMode === "demo_clips")) {
-      tracker.setElements(videoRef.current, canvas);
-    } else {
-      tracker.setElements(null, canvas);
-    }
-    let lastDetectionTime = 0;
-    const DETECTION_INTERVAL_MS = 35;
-
-    const render = (time) => {
-      if (document.hidden) {
-        animationFrameId.current = requestAnimationFrame(render);
-        return;
-      }
-      try {
-        const currentMode = inputSourceModeRef.current;
-        const currentStatus = cameraStreamStatusRef.current;
-        if (currentMode === "webcam" && currentStatus !== "active") {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          animationFrameId.current = requestAnimationFrame(render);
-          return;
-        }
-        const now = performance.now();
-        const shouldRunDetection = now - lastDetectionTime >= DETECTION_INTERVAL_MS;
-        if (shouldRunDetection) {
-          lastDetectionTime = now;
-        }
-        const detection = tracker.processFrame(time, shouldRunDetection);
-
-        if (detection.isCommitted && detection.signMeaning) {
-          const textOutput = detection.signMeaning.translatedText;
-          setFullSentence((prev) => {
-            if (!prev || prev.trim() === "") {
-              return textOutput.charAt(0).toUpperCase() + textOutput.slice(1);
-            }
-            return `${prev.trim()} ${textOutput}`;
-          });
-          setRecognizedSigns((prev) => [
-            ...prev.slice(-14),
-            {
-              text: `${detection.signMeaning?.symbol} ${detection.signMeaning?.translatedText.toUpperCase()}`,
-              confidence: detection.confidence,
-              timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-              hand: "right",
-              type: "word"
-            }
-          ]);
-          if (autoSpeakOnCommitRef.current) {
-            speakText(textOutput, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
-          }
-        }
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (showMeshRef.current) {
-          tracker.draw(ctx, detection, {
-            color: detection.isRealHandDetected ? "#10B981" : "#6366F1",
-            jointColor: "#38BDF8",
-            showBoundingBox: true,
-            showHUD: true,
-            showAlignmentGuide: showAlignmentGuideRef.current,
-            labelPrefix: `${settingsRef.current.primarySignLanguage || "ASL"} MediaPipe CV`
-          });
-        }
-      } catch (err) {
-        console.warn("[LiveTranslateView] Non-fatal frame error:", err);
-      } finally {
-        animationFrameId.current = requestAnimationFrame(render);
-      }
-    };
-    animationFrameId.current = requestAnimationFrame(render);
-    return () => {
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
-      }
-    };
-  }, [
-    isCameraActive,
-    translationMode,
-    inputSourceMode
-  ]);
   const handleTestSign = (signKey) => {
     setSelectedTestSignKey(signKey);
-    handTrackerRef.current.forceSign(signKey);
+    tracking.handTrackerRef.current.forceSign(signKey);
   };
   const handleSaveSign = (key, newSign) => {
-    const registeredKey = handTrackerRef.current.registerCustomSign(key, newSign);
-    const updated = handTrackerRef.current.getDictionary();
+    const registeredKey = tracking.handTrackerRef.current.registerCustomSign(key, newSign);
+    const updated = tracking.handTrackerRef.current.getDictionary();
     setDictionaryMap({ ...updated });
     setSelectedTestSignKey(registeredKey);
-    handTrackerRef.current.forceSign(registeredKey);
+    tracking.handTrackerRef.current.forceSign(registeredKey);
   };
   const handleDeleteCustomSign = (e, key) => {
     e.stopPropagation();
-    handTrackerRef.current.deleteCustomSign(key);
-    const updated = handTrackerRef.current.getDictionary();
+    tracking.handTrackerRef.current.deleteCustomSign(key);
+    const updated = tracking.handTrackerRef.current.getDictionary();
     setDictionaryMap({ ...updated });
   };
   const handleCommitCurrentSign = (customSign) => {
-    const sign = customSign || handTrackerRef.current.getCurrentSignMeaning();
+    const sign = customSign || tracking.handTrackerRef.current.getCurrentSignMeaning();
     if (!sign) return;
     const textOutput = sign.translatedText;
     setFullSentence((prev) => {
@@ -574,16 +154,17 @@ const LiveTranslateView = ({
       {
         text: `${sign.symbol} ${sign.translatedText.toUpperCase()}`,
         confidence: sign.confidence || 0.98,
-        timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         hand: "right",
         type: "word"
       }
     ]);
     speakText(textOutput, settings.speechVoiceRate, settings.speechVoicePitch);
   };
+
   const handleToggleRecording = async () => {
     const recorder = recorderRef.current;
-    const canvas = canvasRef.current;
+    const canvas = tracking.canvasRef.current;
     if (isRecording) {
       const result = await recorder.stopRecording();
       setIsRecording(false);
@@ -593,23 +174,21 @@ const LiveTranslateView = ({
       }
     } else {
       if (!canvas) return;
-      const videoEl = useRealWebcam ? videoRef.current : null;
-      const started = await recorder.startRecording(
-        canvas,
-        videoEl,
-        mediaStreamRef.current
-      );
+      const videoEl = tracking.useRealWebcam ? tracking.videoRef.current : null;
+      const started = await recorder.startRecording(canvas, videoEl, tracking.mediaStreamRef.current);
       if (started) {
         setIsRecording(true);
       }
     }
   };
+
   useEffect(() => {
     speechListenerRef.current = new SpeechToSignListener();
     return () => {
       speechListenerRef.current?.stop();
     };
   }, []);
+
   const handleToggleMic = () => {
     if (!speechListenerRef.current?.isSupported()) {
       alert("Speech recognition is not supported in this browser. You can type text directly in the box.");
@@ -631,15 +210,16 @@ const LiveTranslateView = ({
       setIsListeningMic(true);
     }
   };
+
   const handleTrainSample = async (label) => {
-    return handTrackerRef.current.trainCurrentPoseAsSample(label);
+    return tracking.handTrackerRef.current.trainCurrentPoseAsSample(label);
   };
   const handleSwitchBackend = async (backend) => {
-    await handTrackerRef.current.setTensorFlowBackend(backend);
+    await tracking.handTrackerRef.current.setTensorFlowBackend(backend);
   };
   const handleToggleTfModel = (enabled) => {
     setIsTfModelEnabled(enabled);
-    handTrackerRef.current.setUseTensorFlowClassifier(enabled);
+    tracking.handTrackerRef.current.setUseTensorFlowClassifier(enabled);
   };
   const handleSpeakTranscript = () => {
     const textToSpeak = fullSentence || recognizedSigns.map((s) => s.text).join(" ");
@@ -649,105 +229,59 @@ const LiveTranslateView = ({
     const textToCopy = fullSentence || recognizedSigns.map((s) => s.text).join(" ");
     navigator.clipboard.writeText(textToCopy);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2e3);
+    setTimeout(() => setCopied(false), 2000);
   };
+
   const parsedWords = textInput.toUpperCase().split(/\s+/).filter(Boolean);
   const currentAnimatedWord = parsedWords[animatingGestureIndex % Math.max(1, parsedWords.length)] || "READY";
+
   useEffect(() => {
     if (!isPlayingSignAnimation || parsedWords.length === 0) return;
     const interval = setInterval(() => {
       setAnimatingGestureIndex((prev) => (prev + 1) % parsedWords.length);
-    }, 2e3 / animationSpeed);
+    }, 2000 / animationSpeed);
     return () => clearInterval(interval);
   }, [isPlayingSignAnimation, parsedWords.length, animationSpeed]);
+
   const dictionaryList = Object.entries(dictionaryMap).map(([key, item]) => ({
     key,
     ...item
   }));
-  const filteredDictionary = selectedSignCategory === "all" ? dictionaryList : dictionaryList.filter((d) => d.category === selectedSignCategory);
-  return <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      
-      {
-    /* Top Header & Translation Mode Toggle Bar */
-  }
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
-              {currentLanguage.name} ({currentLanguage.code})
-            </span>
-            <span className="text-xs text-slate-400 font-medium">
-              TensorFlow HandPose Model Active ({dictionaryList.length} Signs Recognized)
-            </span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-white mt-1">
-            Real-Time Sign-to-Text Translation
-          </h1>
-        </div>
+  const filteredDictionary =
+    selectedSignCategory === "all"
+      ? dictionaryList
+      : dictionaryList.filter((d) => d.category === selectedSignCategory);
 
-        {
-    /* Right Controls: Add Sign & Mode Switcher */
-  }
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-    onClick={() => setShowAddSignModal(true)}
-    className="px-3.5 py-2 rounded-2xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white flex items-center space-x-1.5 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
-  >
-            <Plus className="w-4 h-4" />
-            <span>Add Sign Recognition</span>
-          </button>
-
-          <div className="flex items-center bg-slate-100 dark:bg-slate-700/60 p-1 rounded-2xl border border-slate-200/60 dark:border-slate-600/40">
-            <button
-    onClick={() => setTranslationMode("sign_to_text")}
-    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all ${translationMode === "sign_to_text" ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-300 hover:text-slate-900"}`}
-  >
-              <HandMetal className="w-4 h-4" />
-              <span>Sign → Text (Camera CV)</span>
-            </button>
-
-            <button
-    onClick={() => setTranslationMode("speech_to_sign")}
-    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center space-x-2 transition-all ${translationMode === "speech_to_sign" ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-300 hover:text-slate-900"}`}
-  >
-              <Mic className="w-4 h-4" />
-              <span>Speech/Text → Sign (Avatar)</span>
-            </button>
-          </div>
-        </div>
-      </div>
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      <LiveTranslateHeader
+        currentLanguage={currentLanguage}
+        totalRecognizedSigns={dictionaryList.length}
+        onOpenAddSignModal={() => setShowAddSignModal(true)}
+        translationMode={translationMode}
+        onChangeTranslationMode={setTranslationMode}
+      />
 
       {translationMode === "sign_to_text" ? (
-    /* CAMERA AI TRANSLATION VIEW */
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {
-      /* Main Video & Landmark Stage (Left 7 Cols) */
-    }
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 flex flex-col space-y-4">
-            
-            {
-      /* Multi-Source Camera & Video Alternative Selector Panel */
-    }
             <VideoSourcePanel
-      inputMode={inputSourceMode}
-      onSelectMode={handleSelectInputMode}
-      onUploadVideo={handleUploadVideo}
-      onSelectDemoClip={handleSelectDemoClip}
-      activeDemoId={activeDemoId}
-      uploadedFileName={uploadedFileName}
-      isPlayingVideo={isPlayingUploadedVideo}
-      onTogglePlayPause={handleTogglePlayPauseUploadedVideo}
-      onRestartVideo={handleRestartUploadedVideo}
-      playbackRate={videoPlaybackRate}
-      onChangePlaybackRate={handleChangePlaybackRate}
-      onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
-    />
+              inputMode={tracking.inputSourceMode}
+              onSelectMode={tracking.handleSelectInputMode}
+              onUploadVideo={tracking.handleUploadVideo}
+              onSelectDemoClip={tracking.handleSelectDemoClip}
+              activeDemoId={tracking.activeDemoId}
+              uploadedFileName={tracking.uploadedFileName}
+              isPlayingVideo={tracking.isPlayingUploadedVideo}
+              onTogglePlayPause={tracking.handleTogglePlayPauseUploadedVideo}
+              onRestartVideo={tracking.handleRestartUploadedVideo}
+              playbackRate={tracking.videoPlaybackRate}
+              onChangePlaybackRate={tracking.handleChangePlaybackRate}
+              onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
+            />
 
-            {
-      /* iFrame Helper Banner if in AI Studio / Embedded iframe and using webcam */
-    }
-            {isInIframe && inputSourceMode === "webcam" && <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md animate-in fade-in">
+            {isInIframe && tracking.inputSourceMode === "webcam" && (
+              <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md animate-in fade-in">
                 <div className="flex items-center space-x-2.5 min-w-0 pr-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                   <span className="text-[11px] sm:text-xs leading-tight">
@@ -756,741 +290,91 @@ const LiveTranslateView = ({
                 </div>
                 <div className="flex items-center space-x-2 shrink-0">
                   <a
-      href={getSafeCurrentUrl()}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
-    >
+                    href={getSafeCurrentUrl()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
+                  >
                     <ExternalLink className="w-3.5 h-3.5" />
                     <span>Open in New Tab</span>
                   </a>
                   <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center space-x-1 transition-colors border border-slate-700 cursor-pointer"
-    >
+                    onClick={() => setShowDiagnosticsOverlay(true)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center space-x-1 transition-colors border border-slate-700 cursor-pointer"
+                  >
                     <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
                     <span className="hidden sm:inline">Webcam Guide</span>
                   </button>
                 </div>
-              </div>}
-
-            {
-      /* Live Camera / Video Feed Container */
-    }
-            <div className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center">
-              
-              {/* Notice banner if camera timed out or was switched */}
-              {cameraNoticeMessage && inputSourceMode === "webcam" && (
-                <div className="absolute top-3 left-3 right-3 z-40 p-2.5 bg-indigo-950/95 backdrop-blur-md border border-indigo-500/50 rounded-2xl shadow-xl flex items-center justify-between text-xs text-indigo-200 animate-in slide-in-from-top-2">
-                  <div className="flex items-center space-x-2 min-w-0 pr-2">
-                    <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
-                    <span className="text-[11px] sm:text-xs truncate sm:whitespace-normal">{cameraNoticeMessage}</span>
-                  </div>
-                  <div className="flex items-center space-x-2 shrink-0">
-                    <button
-                      onClick={() => {
-                        setCameraNoticeMessage(null);
-                        handleRetryCamera();
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] sm:text-xs transition-colors cursor-pointer"
-                    >
-                      Retry Webcam
-                    </button>
-                    <button
-                      onClick={() => setCameraNoticeMessage(null)}
-                      className="p-1 text-slate-400 hover:text-white rounded-md cursor-pointer"
-                      title="Dismiss notice"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {isCameraActive ? (
-                <>
-                  {/* Real WebCam / Uploaded Video / Demo Video Feed */}
-                  {inputSourceMode !== "simulator" ? (
-                    <>
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        muted
-                        playsInline
-                        loop={inputSourceMode === "video_upload"}
-                        style={{
-                          transform:
-                            inputSourceMode === "webcam"
-                              ? `scaleX(-${Number(cameraZoom) || 1}) scaleY(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)`
-                              : `scale(${Number(cameraZoom) || 1}) translate(${(Number(cameraPan?.x) || 0) * 12}%, ${(Number(cameraPan?.y) || 0) * 12}%)`,
-                          transformOrigin: "center center"
-                        }}
-                        className={`absolute inset-0 w-full h-full object-cover transition-all duration-300 ease-out ${
-                          inputSourceMode === "webcam" && cameraStreamStatus !== "active" ? "opacity-20 filter blur-xs" : "opacity-100"
-                        }`}
-                      />
-
-                      {/* Empty Uploaded Video Prompt */}
-                      {inputSourceMode === "video_upload" && !uploadedVideoUrl && (
-                        <div className="absolute inset-0 z-20 bg-slate-950/80 flex flex-col items-center justify-center p-6 text-center">
-                          <Film className="w-12 h-12 text-indigo-400 mb-3 animate-pulse" />
-                          <h4 className="text-sm font-bold text-white mb-1">No Video File Selected</h4>
-                          <p className="text-xs text-slate-400 max-w-xs mb-3">
-                            Upload an MP4, WebM, or MOV video of sign language to track hands and recognize gestures.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Active Demo Clip Badge */}
-                      {inputSourceMode === "demo_clips" && (
-                        <div className="absolute top-4 left-4 z-20 px-3 py-1.5 rounded-xl bg-cyan-950/80 backdrop-blur-md border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center space-x-2 shadow-lg">
-                          <Film className="w-3.5 h-3.5 text-cyan-400" />
-                          <span>Demo Feed: {activeDemoId}</span>
-                        </div>
-                      )}
-
-                      {/* Camera Stream Loading State Indicator */}
-                      {inputSourceMode === "webcam" && (cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission") && (
-                        <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
-                          <div className="relative mb-4">
-                            <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-                              <Camera className="w-8 h-8 animate-pulse" />
-                            </div>
-                            <div className="absolute -inset-2 rounded-2xl border-2 border-dashed border-indigo-400/40 animate-spin" style={{ animationDuration: "6s" }} />
-                          </div>
-
-                          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 mb-2">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                            <span>
-                              {cameraStreamStatus === "requesting_permission" ? "Awaiting Camera Permission..." : "Connecting Camera to AI Engine..."}
-                            </span>
-                          </div>
-
-                          <h4 className="text-base font-bold text-white mb-1.5 max-w-sm">
-                            {cameraStreamStatus === "requesting_permission" ? 'Please click "Allow" in your browser prompt' : "Connecting video hardware to TensorFlow tracking engine..."}
-                          </h4>
-
-                          <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">
-                            {cameraStreamStatus === "requesting_permission" ? "Your browser may show a permission dialog near the address bar. Grant access to begin real-time sign recognition." : "Initializing video frames, frame buffers, and neural hand landmark detection pipeline."}
-                          </p>
-
-                          <div className="flex flex-wrap items-center justify-center gap-2">
-                            {isInIframe && (
-                              <a
-                                href={getSafeCurrentUrl()}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-sm cursor-pointer"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>Open in New Tab</span>
-                              </a>
-                            )}
-
-                            <button
-                              onClick={() => setShowDiagnosticsOverlay(true)}
-                              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-                            >
-                              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-                              <span>Why isn't Webcam Working?</span>
-                            </button>
-
-                            <button
-                              onClick={handleRetryCamera}
-                              className="px-3 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/30 transition-colors cursor-pointer flex items-center space-x-1 shadow-sm"
-                              title="Force Re-attempt Camera"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              <span>Retry</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleSelectInputMode("simulator")}
-                              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-                            >
-                              <HandMetal className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>Switch to 3D Simulator</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Camera Stream Error State Indicator & Recovery Interface */}
-                      {inputSourceMode === "webcam" && cameraStreamStatus === "error" && cameraError && (
-                        <div className="absolute inset-0 z-30 bg-slate-950/92 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
-                          <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-3 shadow-lg shadow-rose-500/10">
-                            {cameraError.type === "permission_denied" ? <ShieldAlert className="w-8 h-8" /> : cameraError.type === "not_found" ? <VideoOff className="w-8 h-8" /> : cameraError.type === "in_use" ? <AlertCircle className="w-8 h-8" /> : <CameraOff className="w-8 h-8" />}
-                          </div>
-
-                          <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/30 mb-2">
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            <span>{cameraError.title}</span>
-                          </div>
-
-                          <h4 className="text-base font-bold text-white mb-2 max-w-md">
-                            {cameraError.message}
-                          </h4>
-
-                          <div className="p-3.5 my-2 max-w-md w-full rounded-2xl bg-slate-900/90 border border-slate-800 text-left text-xs text-slate-300 leading-relaxed shadow-inner">
-                            <span className="font-bold text-amber-400 flex items-center space-x-1.5 mb-1">
-                              <span>💡 Alternatives & Fixes:</span>
-                            </span>
-                            <p className="text-slate-300">{cameraError.tips}</p>
-                          </div>
-
-                          <div className="flex flex-wrap items-center justify-center gap-2.5 mt-3">
-                            {cameraError.canRetry && (
-                              <button
-                                onClick={handleRetryCamera}
-                                disabled={cameraStreamStatus === "requesting_permission"}
-                                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
-                              >
-                                <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
-                                <span>{cameraStreamStatus === "requesting_permission" ? "Connecting to Camera..." : "Retry Camera Stream"}</span>
-                              </button>
-                            )}
-
-                            {isInIframe && (
-                              <a
-                                href={getSafeCurrentUrl()}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-md cursor-pointer transition-all"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>Open in New Tab (Bypass iFrame)</span>
-                              </a>
-                            )}
-
-                            <button
-                              onClick={() => handleSelectInputMode("simulator")}
-                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
-                            >
-                              <HandMetal className="w-3.5 h-3.5" />
-                              <span>Switch to 3D Simulator (No Webcam)</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleSelectInputMode("demo_clips")}
-                              className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1.5 shadow-md"
-                            >
-                              <Film className="w-3.5 h-3.5" />
-                              <span>Play Demo Sign Video</span>
-                            </button>
-
-                            <button
-                              onClick={() => setShowDiagnosticsOverlay(true)}
-                              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-amber-500/30 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-sm"
-                            >
-                              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-                              <span>Camera Diagnostic</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-      /* Simulated 3D Video Background for Test Mode */
-      <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-6 text-center">
-                      <div className="w-44 h-44 rounded-full bg-indigo-500/10 animate-ping absolute pointer-events-none" />
-                      <div className="text-center z-0 opacity-80 mb-3">
-                        <HandMetal className="w-14 h-14 text-indigo-400 mx-auto mb-2" />
-                        <p className="text-xs font-mono font-bold text-indigo-300">TensorFlow Neural Kinematics Simulation Mode</p>
-                        <p className="text-[11px] text-slate-400 max-w-xs mt-1">Generating 21 3D spatial hand landmarks with anatomical physics.</p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-center gap-2 z-10">
-                        <button
-        onClick={() => handleSelectInputMode("webcam")}
-        className="px-3.5 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 text-indigo-200 text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer shadow-md"
-      >
-                          <Camera className="w-4 h-4" />
-                          <span>Switch to Live Webcam Feed</span>
-                        </button>
-                        <button
-        onClick={() => handleSelectInputMode("demo_clips")}
-        className="px-3.5 py-2 rounded-xl bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/50 text-cyan-200 text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer shadow-md"
-      >
-                          <Film className="w-4 h-4 text-cyan-400" />
-                          <span>Sign Video Library</span>
-                        </button>
-                      </div>
-                    </div>
-    )}
-
-                  {
-      /* Tracking Landmark Canvas Overlay (1280x720) */
-    }
-                  <canvas
-      ref={canvasRef}
-      width={1280}
-      height={720}
-      className="absolute inset-0 w-full h-full pointer-events-none z-10"
-    />
-
-                  {
-      /* Live Scan Line Effect */
-    }
-                  <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent opacity-40 animate-scan pointer-events-none" />
-
-                  {
-      /* Floating Zoom & Hand Alignment HUD Controls */
-    }
-                  <div className="absolute top-4 right-4 z-20 flex flex-col items-end space-y-2">
-                    {
-      /* Compact Glass Zoom Pill Bar */
-    }
-                    <div className="bg-slate-900/90 backdrop-blur-md px-2 py-1.5 rounded-2xl border border-slate-700/80 shadow-2xl flex items-center space-x-1.5">
-                      {
-      /* Auto-Centering Quick Toggle */
-    }
-                      <button
-      onClick={handleToggleAutoCenter}
-      className={`p-1.5 rounded-xl transition-all cursor-pointer flex items-center space-x-1 ${isAutoCentering ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold shadow-md shadow-emerald-500/30" : "bg-slate-800 hover:bg-slate-700 text-slate-300"}`}
-      title="Toggle Computer Vision Hand Auto-Centering & Smart Framing"
-    >
-                        <Crosshair className={`w-3.5 h-3.5 ${isAutoCentering ? "text-emerald-100" : ""}`} />
-                        <span className="text-[10px] font-bold pr-0.5">{isAutoCentering ? "Auto ON" : "Auto"}</span>
-                      </button>
-
-                      {
-      /* Zoom Out Button */
-    }
-                      <button
-      onClick={handleZoomOut}
-      disabled={cameraZoom <= 1 || isAutoCentering}
-      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition-colors cursor-pointer"
-      title="Zoom Out (Reduce camera crop)"
-    >
-                        <ZoomOut className="w-3.5 h-3.5" />
-                      </button>
-
-                      {
-      /* Zoom Level Indicator / Popover Toggle */
-    }
-                      <button
-      onClick={() => setShowZoomMenu(!showZoomMenu)}
-      className="px-2.5 py-1 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 text-indigo-300 text-xs font-mono font-bold flex items-center space-x-1 transition-all cursor-pointer"
-      title="Click to open Zoom Presets & Hand Calibration"
-    >
-                        <Focus className="w-3 h-3" />
-                        <span>{cameraZoom.toFixed(2)}x</span>
-                        <ChevronDown className={`w-3 h-3 transition-transform ${showZoomMenu ? "rotate-180" : ""}`} />
-                      </button>
-
-                      {
-      /* Zoom In Button */
-    }
-                      <button
-      onClick={handleZoomIn}
-      disabled={cameraZoom >= 3.5 || isAutoCentering}
-      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition-colors cursor-pointer"
-      title="Zoom In (Enlarge hand & fingers for precise tracking)"
-    >
-                        <ZoomIn className="w-3.5 h-3.5" />
-                      </button>
-
-                      {
-      /* Reset 1.0x (if zoomed or panned) */
-    }
-                      {(cameraZoom > 1 || cameraPan.x !== 0 || cameraPan.y !== 0) && !isAutoCentering && <button
-      onClick={handleResetZoom}
-      className="px-2 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold border border-amber-500/30 transition-colors cursor-pointer"
-      title="Reset to 1.0x Default Fit"
-    >
-                          1.0x
-                        </button>}
-
-                      {
-      /* Hand Alignment Guide Toggle */
-    }
-                      <button
-      onClick={() => setShowAlignmentGuide(!showAlignmentGuide)}
-      className={`p-1.5 rounded-xl transition-all cursor-pointer flex items-center space-x-1 ${showAlignmentGuide ? "bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/30" : "bg-slate-800 hover:bg-slate-700 text-slate-300"}`}
-      title="Toggle Hand Alignment Guide & Sweet-spot Reticle"
-    >
-                        <Target className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-bold pr-0.5">{showAlignmentGuide ? "Guide ON" : "Align"}</span>
-                      </button>
-                    </div>
-
-                    {
-      /* Precision Zoom & Framing Popover Drawer */
-    }
-                    {showZoomMenu && <div className="w-80 bg-slate-900/95 backdrop-blur-xl p-4 rounded-2xl border border-slate-700/90 shadow-2xl space-y-3.5 animate-in fade-in zoom-in-95 duration-150 text-xs">
-                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                          <span className="font-bold text-white flex items-center space-x-1.5">
-                            <Sliders className="w-3.5 h-3.5 text-indigo-400" />
-                            <span>Camera Zoom & Framing</span>
-                          </span>
-                          <button
-      onClick={handleResetZoom}
-      className="text-[10px] text-indigo-400 hover:underline flex items-center space-x-1 cursor-pointer"
-    >
-                            <RotateCcw className="w-2.5 h-2.5" />
-                            <span>Reset</span>
-                          </button>
-                        </div>
-
-                        {
-      /* Auto-Centering Toggle Card */
-    }
-                        <div className={`p-3 rounded-xl border transition-all ${isAutoCentering ? "bg-emerald-950/40 border-emerald-500/50" : "bg-slate-800/60 border-slate-700/60"}`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <Crosshair className={`w-4 h-4 ${isAutoCentering ? "text-emerald-400" : "text-slate-400"}`} />
-                              <div>
-                                <span className="font-bold text-white block">Auto-Center Hand (CV)</span>
-                                <span className="text-[10px] text-slate-400">Automatic optical hand tracking</span>
-                              </div>
-                            </div>
-                            <input
-      type="checkbox"
-      checked={isAutoCentering}
-      onChange={handleToggleAutoCenter}
-      className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-400 cursor-pointer"
-    />
-                          </div>
-
-                          {isAutoCentering && <div className="mt-2 pt-2 border-t border-emerald-900/60 flex items-center justify-between text-[11px]">
-                              <span className="text-emerald-300 font-mono flex items-center space-x-1">
-                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                <span>Auto Tracking Hand</span>
-                              </span>
-                              <span className="text-slate-300 font-mono">
-                                Zoom: <strong className="text-emerald-400">{cameraZoom.toFixed(2)}x</strong>
-                              </span>
-                            </div>}
-                        </div>
-
-                        {
-      /* Quick Presets */
-    }
-                        <div className={isAutoCentering ? "opacity-50 pointer-events-none" : ""}>
-                          <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1.5">
-                            Quick Zoom Presets {isAutoCentering && "(Disabled while Auto-Center is ON)"}
-                          </label>
-                          <div className="grid grid-cols-4 gap-1.5">
-                            {[
-      { label: "1.0x Fit", val: 1 },
-      { label: "1.25x", val: 1.25 },
-      { label: "1.5x Opt", val: 1.5 },
-      { label: "1.75x", val: 1.75 },
-      { label: "2.0x Close", val: 2 },
-      { label: "2.5x", val: 2.5 },
-      { label: "3.0x Macro", val: 3 },
-      { label: "3.5x Max", val: 3.5 }
-    ].map((preset) => <button
-      key={preset.val}
-      onClick={() => handleSetZoom(preset.val)}
-      disabled={isAutoCentering}
-      className={`py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${Math.abs(cameraZoom - preset.val) < 0.05 ? "bg-indigo-600 text-white shadow-xs" : "bg-slate-800 hover:bg-slate-700 text-slate-300"}`}
-    >
-                                {preset.label}
-                              </button>)}
-                          </div>
-                        </div>
-
-                        {
-      /* Continuous Zoom Slider */
-    }
-                        <div className={`space-y-1 ${isAutoCentering ? "opacity-50 pointer-events-none" : ""}`}>
-                          <div className="flex justify-between text-[11px] text-slate-300">
-                            <span>Magnification</span>
-                            <span className="font-mono text-indigo-400 font-bold">{cameraZoom.toFixed(2)}x</span>
-                          </div>
-                          <input
-      type="range"
-      min="1.0"
-      max="3.5"
-      step="0.05"
-      value={cameraZoom}
-      disabled={isAutoCentering}
-      onChange={(e) => handleSetZoom(parseFloat(e.target.value))}
-      className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-    />
-                        </div>
-
-                        {
-      /* Finger Span Calibration Scale */
-    }
-                        <div className="space-y-1 pt-1 border-t border-slate-800">
-                          <div className="flex justify-between text-[11px] text-slate-300">
-                            <span>Skeletal Hand Span Scale</span>
-                            <span className="font-mono text-emerald-400 font-bold">{Math.round(calibrationScale * 100)}%</span>
-                          </div>
-                          <input
-      type="range"
-      min="0.75"
-      max="1.35"
-      step="0.05"
-      value={calibrationScale}
-      onChange={(e) => setCalibrationScale(parseFloat(e.target.value))}
-      className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-    />
-                          <p className="text-[10px] text-slate-400 leading-tight">
-                            Fine-tune finger length mapping to align precisely with your fingers.
-                          </p>
-                        </div>
-
-                        {
-      /* Camera Framing Pan D-Pad */
-    }
-                        {cameraZoom > 1.05 && <div className="pt-2 border-t border-slate-800">
-                            <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1.5 flex items-center space-x-1">
-                              <Move className="w-3 h-3 text-slate-400" />
-                              <span>Nudge Camera Frame Offset</span>
-                            </label>
-                            <div className="flex items-center justify-center">
-                              <div className="grid grid-cols-3 gap-1 w-28 text-center">
-                                <div />
-                                <button
-      onClick={() => handlePanNudge(0, -0.15)}
-      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 cursor-pointer"
-      title="Pan Up"
-    >
-                                  ▲
-                                </button>
-                                <div />
-                                <button
-      onClick={() => handlePanNudge(-0.15, 0)}
-      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 cursor-pointer"
-      title="Pan Left"
-    >
-                                  ◀
-                                </button>
-                                <button
-      onClick={() => setCameraPan({ x: 0, y: 0 })}
-      className="p-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 rounded text-indigo-300 font-bold text-[9px] cursor-pointer"
-      title="Center View"
-    >
-                                  •
-                                </button>
-                                <button
-      onClick={() => handlePanNudge(0.15, 0)}
-      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 cursor-pointer"
-      title="Pan Right"
-    >
-                                  ▶
-                                </button>
-                                <div />
-                                <button
-      onClick={() => handlePanNudge(0, 0.15)}
-      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 cursor-pointer"
-      title="Pan Down"
-    >
-                                  ▼
-                                </button>
-                                <div />
-                              </div>
-                            </div>
-                          </div>}
-                      </div>}
-                  </div>
-
-                  {/* Isolated Real-Time Overlay HUD & Diagnostics */}
-                  <LiveGestureOverlayHUD
-                    tracker={handTrackerRef.current}
-                    useRealWebcam={useRealWebcam}
-                    cameraStreamStatus={cameraStreamStatus}
-                    primarySignLanguage={settings.primarySignLanguage}
-                    activeStreamResolution={activeStreamResolution}
-                    hardwarePermissionStatus={hardwarePermissionStatus}
-                    onShowDiagnostics={() => setShowDiagnosticsOverlay(true)}
-                    onCommitSign={handleCommitCurrentSign}
-                  />
-                  <div className="absolute top-4 right-4 z-20 pointer-events-auto">
-                    <RecordingDurationPill recorder={recorderRef.current} isRecording={isRecording} />
-                  </div>
-                </>
-              ) : (
-                <div className="text-center p-8">
-                  <CameraOff className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-300 font-semibold mb-1">Camera Feed Paused</p>
-                  <p className="text-xs text-slate-500 max-w-xs mb-4">
-                    Enable camera to start live sign language landmark tracking and translation.
-                  </p>
-                  <button
-                    onClick={() => setIsCameraActive(true)}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
-                  >
-                    Start Translation Camera
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {
-      /* Camera Toolbar Controls */
-    }
-            <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-      onClick={() => setIsCameraActive(!isCameraActive)}
-      className={`p-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${isCameraActive ? "bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200" : "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"}`}
-    >
-                  {isCameraActive ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
-                  <span>{isCameraActive ? "Camera On" : "Camera Off"}</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    if (!useRealWebcam) {
-                      handleSelectInputMode("webcam");
-                    } else {
-                      handleSelectInputMode("simulator");
-                    }
-                  }}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${useRealWebcam ? cameraStreamStatus === "error" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-700" : "bg-indigo-600 text-white shadow-xs" : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300"}`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>
-                    {useRealWebcam ? cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission" ? "Connecting..." : cameraStreamStatus === "error" ? "Webcam Error" : "Using Webcam" : "Simulation Mode"}
-                  </span>
-                </button>
-
-                {cameraStreamStatus === "error" && useRealWebcam && (
-                  <button
-                    onClick={handleRetryCamera}
-                    disabled={cameraStreamStatus === "requesting_permission"}
-                    className="px-2.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
-                    title="Retry Camera Initialization"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
-                    <span>Retry</span>
-                  </button>
-                )}
-
-                <button
-      onClick={() => setShowMesh(!showMesh)}
-      className={`p-2 rounded-xl text-xs font-semibold transition-colors ${showMesh ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-500/30" : "bg-slate-100 dark:bg-slate-700 text-slate-500"}`}
-      title="Toggle 21-point Hand Landmarks Skeleton Mesh"
-    >
-                  Mesh {showMesh ? "ON" : "OFF"}
-                </button>
-
-                {
-      /* Auto Speak on Commit */
-    }
-                <button
-      onClick={() => setAutoSpeakOnCommit(!autoSpeakOnCommit)}
-      className={`p-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors ${autoSpeakOnCommit ? "bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-400/40" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}
-      title="Automatically speak each committed sign out loud"
-    >
-                  {autoSpeakOnCommit ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                  <span>Auto TTS {autoSpeakOnCommit ? "ON" : "OFF"}</span>
-                </button>
-
-                {
-      /* Record Translation Video Button */
-    }
-                <RecordingControls
-                  isRecording={isRecording}
-                  onToggleRecording={handleToggleRecording}
-                  recorder={recorderRef.current}
-                />
-
-                {
-      /* Camera Hardware Diagnostics & Stream Resolution Inspector */
-    }
-                <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${showDiagnosticsOverlay ? "bg-indigo-600 text-white shadow-xs" : isDarkFeedWarning ? "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border border-amber-500/50 animate-pulse" : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200"}`}
-      title="Inspect Camera Hardware, Permissions, Resolution & Darkness Troubleshooting"
-    >
-                  <Activity className={`w-3.5 h-3.5 ${isDarkFeedWarning ? "text-amber-600 dark:text-amber-400" : "text-indigo-500 dark:text-indigo-400"}`} />
-                  <span>Diagnostics</span>
-                  {activeStreamResolution && <span className="hidden sm:inline text-[10px] font-mono opacity-75">
-                      ({activeStreamResolution.width}×{activeStreamResolution.height})
-                    </span>}
-                </button>
-
-                {
-      /* Zoom, Auto-Center & Alignment Controls */
-    }
-                <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-700/80 p-1 rounded-xl border border-slate-200 dark:border-slate-600">
-                  <button
-      onClick={handleToggleAutoCenter}
-      className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${isAutoCentering ? "bg-emerald-600 text-white shadow-xs" : "text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600"}`}
-      title="Toggle Real-Time Hand Auto-Centering (Computer Vision)"
-    >
-                    <Crosshair className="w-3.5 h-3.5" />
-                    <span>Auto-Center</span>
-                  </button>
-                  <button
-      onClick={handleZoomOut}
-      disabled={cameraZoom <= 1 || isAutoCentering}
-      className="p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-40 transition-colors cursor-pointer"
-      title="Zoom Out Camera (0.25x step)"
-    >
-                    <ZoomOut className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-      onClick={() => setShowZoomMenu(!showZoomMenu)}
-      className="px-2 py-1 rounded-lg text-xs font-mono font-bold bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 shadow-2xs hover:bg-slate-50 transition-colors flex items-center space-x-1 cursor-pointer"
-      title="Adjust Camera Zoom & Alignment Settings"
-    >
-                    <span>{cameraZoom.toFixed(2)}x</span>
-                  </button>
-                  <button
-      onClick={handleZoomIn}
-      disabled={cameraZoom >= 3.5 || isAutoCentering}
-      className="p-1.5 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-600 disabled:opacity-40 transition-colors cursor-pointer"
-      title="Zoom In Camera (0.25x step)"
-    >
-                    <ZoomIn className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-      onClick={() => setShowAlignmentGuide(!showAlignmentGuide)}
-      className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${showAlignmentGuide ? "bg-emerald-600 text-white shadow-xs" : "text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600"}`}
-      title="Toggle Hand Alignment Guide Reticle"
-    >
-                    <Target className="w-3.5 h-3.5" />
-                    <span>Guide</span>
-                  </button>
-                </div>
-
-                {
-      /* Free Finger Motion Studio Toggle */
-    }
-                <button
-      onClick={() => setShowFreeFingerStudio(!showFreeFingerStudio)}
-      className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${showFreeFingerStudio ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/20" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-500/30"}`}
-      title="Open Free Finger Articulation & Dynamic Motion Studio"
-    >
-                  <HandMetal className="w-4 h-4" />
-                  <span>Free Fingers Studio {showFreeFingerStudio ? "\u25B2" : "\u25BC"}</span>
-                </button>
               </div>
+            )}
 
-              <div className="flex items-center space-x-2">
-                <button
-      onClick={onOpenKeyboard}
-      className="px-3 py-2 rounded-xl text-xs font-semibold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition-colors flex items-center space-x-1.5"
-    >
-                  <Keyboard className="w-3.5 h-3.5" />
-                  <span>Sign Keyboard</span>
-                </button>
+            <CameraFeedStage
+              isCameraActive={isCameraActive}
+              setIsCameraActive={setIsCameraActive}
+              tracking={tracking}
+              isInIframe={isInIframe}
+              settings={settings}
+              isRecording={isRecording}
+              recorder={recorderRef.current}
+              onCommitSign={handleCommitCurrentSign}
+              onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
+              onToggleAutoCenter={handleToggleAutoCenter}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onSetZoom={handleSetZoom}
+              onResetZoom={handleResetZoom}
+              onPanNudge={handlePanNudge}
+            />
 
-                <button
-      onClick={onOpenTutorial}
-      className="p-2 rounded-xl text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white bg-slate-100 dark:bg-slate-700 transition-colors"
-      title="How to Sign Tutorial"
-    >
-                  <HelpCircle className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Free Finger Articulation & Dynamic Motion Studio */}
-            {showFreeFingerStudio && <FreeFingerController
-              handTracker={handTrackerRef.current}
-              currentPose={null}
-              onPoseChange={(p) => {
-                handTrackerRef.current.setFreePose(p);
+            <CameraToolbar
+              isCameraActive={isCameraActive}
+              onToggleCameraActive={() => setIsCameraActive(!isCameraActive)}
+              useRealWebcam={tracking.useRealWebcam}
+              cameraStreamStatus={tracking.cameraStreamStatus}
+              onSwitchInputMode={() => {
+                if (!tracking.useRealWebcam) {
+                  tracking.handleSelectInputMode("webcam");
+                } else {
+                  tracking.handleSelectInputMode("simulator");
+                }
               }}
-            />}
+              onRetryCamera={tracking.handleRetryCamera}
+              showMesh={tracking.showMesh}
+              onToggleMesh={() => tracking.setShowMesh(!tracking.showMesh)}
+              autoSpeakOnCommit={tracking.autoSpeakOnCommit}
+              onToggleAutoSpeak={() => tracking.setAutoSpeakOnCommit(!tracking.autoSpeakOnCommit)}
+              isRecording={isRecording}
+              onToggleRecording={handleToggleRecording}
+              recorder={recorderRef.current}
+              showDiagnosticsOverlay={showDiagnosticsOverlay}
+              onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
+              isDarkFeedWarning={isDarkFeedWarning}
+              activeStreamResolution={tracking.activeStreamResolution}
+              isAutoCentering={tracking.isAutoCentering}
+              onToggleAutoCenter={handleToggleAutoCenter}
+              cameraZoom={tracking.cameraZoom}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onOpenZoomMenu={() => tracking.setShowZoomMenu(!tracking.showZoomMenu)}
+              showAlignmentGuide={tracking.showAlignmentGuide}
+              onToggleAlignmentGuide={() => tracking.setShowAlignmentGuide(!tracking.showAlignmentGuide)}
+              showFreeFingerStudio={showFreeFingerStudio}
+              onToggleFreeFingerStudio={() => setShowFreeFingerStudio(!showFreeFingerStudio)}
+              onOpenKeyboard={onOpenKeyboard}
+              onOpenTutorial={onOpenTutorial}
+            />
 
-            {/* Pure JavaScript TensorFlow.js Deep Learning Engine HUD */}
+            {showFreeFingerStudio && (
+              <FreeFingerController
+                handTracker={tracking.handTrackerRef.current}
+                currentPose={null}
+                onPoseChange={(p) => {
+                  tracking.handTrackerRef.current.setFreePose(p);
+                }}
+              />
+            )}
+
             <TensorFlowEngineHUD
               isEnabled={isTfModelEnabled}
               onToggleEnabled={handleToggleTfModel}
@@ -1498,361 +382,101 @@ const LiveTranslateView = ({
               onSwitchBackend={handleSwitchBackend}
             />
 
-            {
-      /* Interactive Sign Language Cheatsheet & Live Symbol Tester */
-    }
-            <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                <div className="flex items-center space-x-2">
-                  <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                    Sign Language Symbols & Recognition Dictionary ({dictionaryList.length})
-                  </h3>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                  <button
-      onClick={() => setShowAddSignModal(true)}
-      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center space-x-1 transition-colors"
-    >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add New Sign</span>
-                  </button>
-
-                  {["all", "custom", "greetings", "common", "emergency", "actions", "numbers", "alphabet"].map((cat) => <button
-      key={cat}
-      onClick={() => setSelectedSignCategory(cat)}
-      className={`px-2.5 py-1 rounded-lg capitalize transition-colors ${selectedSignCategory === cat ? "bg-indigo-600 text-white font-bold" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200"}`}
-    >
-                      {cat}
-                    </button>)}
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-500 mb-3">
-                Hold any of these signs in front of your camera or click to simulate and translate the symbol into text!
-              </p>
-
-              {
-      /* Grid of Signs */
-    }
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto pr-1">
-                {filteredDictionary.map((item) => {
-                  const isActive = selectedTestSignKey === item.key;
-                  return (
-                    <div
-                      key={item.key}
-                      onClick={() => handleTestSign(item.key)}
-                      className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer relative group ${isActive ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs" : "bg-slate-50 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300"}`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-2xl">{item.symbol}</span>
-                        <div className="flex items-center space-x-1">
-                          {item.isCustom && <button
-        onClick={(e) => handleDeleteCustomSign(e, item.key)}
-        className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 rounded transition-all"
-        title="Delete custom sign"
-      >
-                              <Trash2 className="w-3 h-3" />
-                            </button>}
-                          {isActive && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
-                            {item.translatedText}
-                          </p>
-                          {item.isCustom && <span className="text-[9px] px-1 bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded font-bold">
-                              User
-                            </span>}
-                        </div>
-                        <p className="text-[10px] text-slate-500 line-clamp-1">
-                          {item.signName}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {cameraError && (
-              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-2xl text-xs text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs">
-                <div className="flex items-start space-x-2.5">
-                  <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                  <div>
-                    <span className="font-bold">
-                      {cameraError.title || "Camera Status Notice"}:
-                    </span>{" "}
-                    <span>{cameraError.message}</span>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
-                  <button
-                    onClick={handleRetryCamera}
-                    disabled={cameraStreamStatus === "requesting_permission"}
-                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] flex items-center space-x-1 transition-colors cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${cameraStreamStatus === "requesting_permission" ? "animate-spin" : ""}`} />
-                    <span>Retry</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCameraError(null);
-                    }}
-                    className="px-2 py-1 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold text-[11px] cursor-pointer"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            )}
+            <SignDictionaryPanel
+              dictionaryList={dictionaryList}
+              filteredDictionary={filteredDictionary}
+              selectedSignCategory={selectedSignCategory}
+              onSelectCategory={setSelectedSignCategory}
+              selectedTestSignKey={selectedTestSignKey}
+              onTestSign={handleTestSign}
+              onOpenAddSignModal={() => setShowAddSignModal(true)}
+              onDeleteCustomSign={handleDeleteCustomSign}
+            />
           </div>
 
-          {
-      /* Transcript & Output Box (Right 5 Cols) */
-    }
-          <div className="lg:col-span-5 flex flex-col space-y-4">
-            
-            {
-      /* Live Generated Sentence Box */
-    }
-            <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col flex-1">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                    Live Translated Sentence
-                  </h3>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <button
-      onClick={handleSpeakTranscript}
-      className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-      title="Vocalize sentence (Text-to-Speech)"
-    >
-                    <Volume2 className="w-4 h-4" />
-                  </button>
-                  <button
-      onClick={handleCopy}
-      className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-      title="Copy to Clipboard"
-    >
-                    {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {
-      /* Editable/Interactive Transcript Box */
-    }
-              <textarea
-      value={fullSentence}
-      onChange={(e) => setFullSentence(e.target.value)}
-      className={`w-full flex-1 min-h-[140px] p-4 rounded-2xl resize-none text-base leading-relaxed font-medium transition-all ${settings.highContrastCaptions ? "bg-black text-amber-300 font-mono border-2 border-amber-400" : "bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700/80 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500"}`}
-      placeholder="Translated sign language will assemble here automatically as you sign in front of the camera..."
-    />
-
-              {
-      /* Action Buttons */
-    }
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60">
-                <button
-      onClick={() => setFullSentence("")}
-      className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center space-x-1"
-    >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Clear Text</span>
-                </button>
-
-                <div className="flex items-center space-x-2">
-                  <button
-      onClick={handleSpeakTranscript}
-      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"
-    >
-                    <Volume2 className="w-3.5 h-3.5" />
-                    <span>Speak Audio (TTS)</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {
-      /* Gesture Stream Feed Log */
-    }
-            <div className="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs flex-1 flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-                  Recognized Signs Feed Tape
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  {recognizedSigns.length} symbols captured
-                </span>
-              </div>
-
-              <div className="space-y-2 overflow-y-auto max-h-[220px] pr-1">
-                {recognizedSigns.slice().reverse().map((sign, idx) => <div
-      key={idx}
-      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/60 dark:border-slate-800 text-xs"
-    >
-                    <div className="flex items-center space-x-2.5">
-                      <span className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 flex items-center justify-center font-bold text-xs">
-                        ASL
-                      </span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {sign.text}
-                      </span>
-                    </div>
-                    <div className="flex items-center space-x-3 text-slate-400">
-                      <span className="text-[10px]">{sign.timestamp}</span>
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-[10px]">
-                        {Math.round(sign.confidence * 100)}%
-                      </span>
-                    </div>
-                  </div>)}
-              </div>
-            </div>
-
-          </div>
+          <LiveTranscriptBox
+            fullSentence={fullSentence}
+            onChangeFullSentence={setFullSentence}
+            onClearFullSentence={() => setFullSentence("")}
+            onSpeakTranscript={handleSpeakTranscript}
+            onCopyTranscript={handleCopy}
+            copied={copied}
+            highContrastCaptions={settings.highContrastCaptions}
+            recognizedSigns={recognizedSigns}
+          />
         </div>
-  ) : (
-    /* Speech / Text -> Sign Language Gesture Generator View */
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {
-      /* Input Panel (Left 5 Cols) */
-    }
-          <div className="lg:col-span-5 space-y-4">
-            <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-                  <span>Enter Text or Speak to Translate</span>
-                </label>
-                <button
-      onClick={handleToggleMic}
-      className={`p-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all ${isListeningMic ? "bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-500/25" : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 hover:text-indigo-600"}`}
-    >
-                  {isListeningMic ? <Mic className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isListeningMic ? "Listening..." : "Voice Input"}</span>
-                </button>
-              </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <TextToSignInputPanel
+            textInput={textInput}
+            onChangeTextInput={setTextInput}
+            isListeningMic={isListeningMic}
+            onToggleMic={handleToggleMic}
+            parsedWords={parsedWords}
+            animatingGestureIndex={animatingGestureIndex}
+            onSelectWordIndex={setAnimatingGestureIndex}
+          />
 
-              <textarea
-      value={textInput}
-      onChange={(e) => setTextInput(e.target.value)}
-      rows={4}
-      className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 text-sm font-medium focus:ring-2 focus:ring-indigo-500 resize-none"
-      placeholder="Type or speak a message (e.g. 'Hello, where is the doctor? Thank you')..."
-    />
-
-              {
-      /* Quick Preset Phrases */
-    }
-              <div className="mt-3">
-                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                  Quick Sign Phrases
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {["Hello my friend", "Thank you so much", "I need help please", "Where is doctor", "I love you"].map((phrase) => <button
-      key={phrase}
-      onClick={() => setTextInput(phrase)}
-      className="px-2.5 py-1 rounded-lg text-xs bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
-    >
-                      {phrase}
-                    </button>)}
-                </div>
-              </div>
-            </div>
-
-            {
-      /* Word Breakdown Chips */
-    }
-            <div className="bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
-              <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider block mb-3">
-                Sign Sequence Tokens ({parsedWords.length})
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {parsedWords.map((word, idx) => <button
-      key={idx}
-      onClick={() => setAnimatingGestureIndex(idx)}
-      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${animatingGestureIndex === idx ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/25 scale-105" : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200"}`}
-    >
-                    <span>{word}</span>
-                  </button>)}
-              </div>
-            </div>
-          </div>
-
-          {
-      /* Animated Sign Avatar & Gesture Player (Right 7 Cols) */
-    }
           <div className="lg:col-span-7 space-y-4">
             <SignLanguageAvatar
-      currentWord={currentAnimatedWord}
-      fullSentence={textInput}
-      wordIndex={animatingGestureIndex}
-      totalWords={parsedWords.length}
-      isPlaying={isPlayingSignAnimation}
-      onTogglePlay={() => setIsPlayingSignAnimation(!isPlayingSignAnimation)}
-      playbackSpeed={animationSpeed}
-      onChangeSpeed={(spd) => setAnimationSpeed(spd)}
-      onNextWord={() => setAnimatingGestureIndex((prev) => (prev + 1) % Math.max(1, parsedWords.length))}
-      onPrevWord={() => setAnimatingGestureIndex((prev) => (prev - 1 + Math.max(1, parsedWords.length)) % Math.max(1, parsedWords.length))}
-      onSelectWordIndex={(idx) => setAnimatingGestureIndex(idx)}
-      primarySignLanguage={currentLanguage.code}
-      speechVoiceRate={settings.speechVoiceRate}
-      speechVoicePitch={settings.speechVoicePitch}
-    />
+              currentWord={currentAnimatedWord}
+              fullSentence={textInput}
+              wordIndex={animatingGestureIndex}
+              totalWords={parsedWords.length}
+              isPlaying={isPlayingSignAnimation}
+              onTogglePlay={() => setIsPlayingSignAnimation(!isPlayingSignAnimation)}
+              playbackSpeed={animationSpeed}
+              onChangeSpeed={(spd) => setAnimationSpeed(spd)}
+              onNextWord={() =>
+                setAnimatingGestureIndex((prev) => (prev + 1) % Math.max(1, parsedWords.length))
+              }
+              onPrevWord={() =>
+                setAnimatingGestureIndex(
+                  (prev) => (prev - 1 + Math.max(1, parsedWords.length)) % Math.max(1, parsedWords.length)
+                )
+              }
+              onSelectWordIndex={(idx) => setAnimatingGestureIndex(idx)}
+              primarySignLanguage={currentLanguage.code}
+              speechVoiceRate={settings.speechVoiceRate}
+              speechVoicePitch={settings.speechVoicePitch}
+            />
           </div>
         </div>
-  )}
+      )}
 
-      {
-    /* Add Custom Sign Recognition Modal */
-  }
-      {showAddSignModal && <AddSignModal
-    onClose={() => setShowAddSignModal(false)}
-    onSaveSign={handleSaveSign}
-  />}
+      {showAddSignModal && (
+        <AddSignModal
+          onClose={() => setShowAddSignModal(false)}
+          onSaveSign={handleSaveSign}
+        />
+      )}
 
-      {
-    /* Recorded Video Playback & Download Modal */
-  }
-      {showRecordedModal && activeRecordingResult && <RecordedVideoModal
-    recording={activeRecordingResult}
-    onClose={() => setShowRecordedModal(false)}
-  />}
+      {showRecordedModal && activeRecordingResult && (
+        <RecordedVideoModal
+          recording={activeRecordingResult}
+          onClose={() => setShowRecordedModal(false)}
+        />
+      )}
 
-      {
-    /* Hardware Permission & Camera Stream Diagnostic Overlay */
-  }
       <CameraDiagnosticOverlay
-    isOpen={showDiagnosticsOverlay}
-    onClose={() => setShowDiagnosticsOverlay(false)}
-    permissionStatus={hardwarePermissionStatus}
-    streamStatus={cameraStreamStatus}
-    activeResolution={activeStreamResolution}
-    videoElement={videoRef.current}
-    mediaStream={mediaStreamRef.current}
-    cameraError={cameraError}
-    facingMode={settings.cameraFacing}
-    useRealWebcam={useRealWebcam}
-    onRetryCamera={handleRetryCamera}
-    onSwitchFacingMode={() => {
-      onUpdateSettings({ cameraFacing: settings.cameraFacing === "user" ? "environment" : "user" });
-      setCameraRetryCount((c) => c + 1);
-    }}
-    onToggleWebcamMode={() => {
-      setUseRealWebcam(!useRealWebcam);
-      if (!useRealWebcam) {
-        setCameraRetryCount((c) => c + 1);
-      }
-    }}
-  />
-
-    </div>;
-};
-export {
-  LiveTranslateView
+        isOpen={showDiagnosticsOverlay}
+        onClose={() => setShowDiagnosticsOverlay(false)}
+        permissionStatus={tracking.hardwarePermissionStatus}
+        streamStatus={tracking.cameraStreamStatus}
+        activeResolution={tracking.activeStreamResolution}
+        videoElement={tracking.videoRef.current}
+        mediaStream={tracking.mediaStreamRef.current}
+        cameraError={tracking.cameraError}
+        facingMode={settings.cameraFacing}
+        useRealWebcam={tracking.useRealWebcam}
+        onRetryCamera={tracking.handleRetryCamera}
+        onSwitchFacingMode={() => {
+          onUpdateSettings({ cameraFacing: settings.cameraFacing === "user" ? "environment" : "user" });
+        }}
+        onToggleWebcamMode={() => {
+          tracking.setUseRealWebcam(!tracking.useRealWebcam);
+        }}
+      />
+    </div>
+  );
 };
