@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Hand,
   Sparkles,
@@ -14,14 +14,14 @@ import {
   triggerHapticFeedback
 } from "../utils/fingerMapping";
 import { SkeletalHandVisualizer } from "./SkeletalHandVisualizer";
+
 const FingerActivationVisualizer = ({
   currentSignName,
   onFingerSelect,
   selectedFingerFilter = null,
   className = ""
 }) => {
-  const [profile, setProfile] = useState(() => getFingerProfileForSign(currentSignName));
-  const [hapticPulseTrigger, setHapticPulseTrigger] = useState(0);
+  const profile = useMemo(() => getFingerProfileForSign(currentSignName), [currentSignName]);
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [viewMode, setViewMode] = useState("skeleton");
@@ -31,26 +31,37 @@ const FingerActivationVisualizer = ({
     effectiveStiffness: 420,
     effectiveDamping: 28,
     effectiveMass: 0.75,
-    label: "\u{1F3AF} Balanced Kinematics"
+    label: "🎯 Balanced Kinematics"
   });
+
+  const lastSignNameRef = useRef(currentSignName);
+
   const handleVelocityCalculated = useCallback((metrics) => {
-    setCurrentVelocityMetrics(metrics);
+    setCurrentVelocityMetrics(prev => {
+      if (
+        prev.effectiveStiffness === metrics.effectiveStiffness &&
+        prev.effectiveDamping === metrics.effectiveDamping &&
+        prev.label === metrics.label
+      ) {
+        return prev;
+      }
+      return metrics;
+    });
   }, []);
+
   useEffect(() => {
-    const newProfile = getFingerProfileForSign(currentSignName);
-    setProfile(newProfile);
-    setHapticPulseTrigger((prev) => prev + 1);
     if (hapticsEnabled || soundEnabled) {
-      triggerHapticFeedback(newProfile.hapticPattern, newProfile.soundPitch, soundEnabled);
+      triggerHapticFeedback(profile.hapticPattern, profile.soundPitch, soundEnabled);
     }
-  }, [currentSignName, hapticsEnabled, soundEnabled]);
+  }, [profile, hapticsEnabled, soundEnabled]);
+
   const fingerKeys = ["thumb", "index", "middle", "ring", "pinky"];
-  const activeSpringConfig = {
+  const activeSpringConfig = useMemo(() => ({
     type: "spring",
     stiffness: currentVelocityMetrics.effectiveStiffness,
     damping: currentVelocityMetrics.effectiveDamping,
     mass: currentVelocityMetrics.effectiveMass
-  };
+  }), [currentVelocityMetrics.effectiveStiffness, currentVelocityMetrics.effectiveDamping, currentVelocityMetrics.effectiveMass]);
   return <div className={`bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs transition-all ${className}`}>
       
       {
@@ -223,7 +234,7 @@ const FingerActivationVisualizer = ({
     }
                   <AnimatePresence>
                     {isPrimary && <motion.div
-      key={`pulse-${fKey}-${hapticPulseTrigger}`}
+      key={`pulse-${fKey}-${currentSignName}`}
       initial={{ opacity: 0, y: 10, scale: 0.8 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.8 }}
@@ -242,7 +253,7 @@ const FingerActivationVisualizer = ({
       /* Finger Pillar Column with Kinetic Lift Animation */
     }
                   <motion.div
-      key={`finger-col-${fKey}-${hapticPulseTrigger}`}
+      key={`finger-col-${fKey}`}
       animate={{
         y: liftPixels,
         scale: isPrimary ? 1.05 : 1

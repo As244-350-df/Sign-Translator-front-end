@@ -1,5 +1,39 @@
 let lastSpeakTime = 0;
 let lastSpokenText = "";
+let cachedVoices = [];
+let voiceInitDone = false;
+
+// Pre-fetch and cache available voices immediately on module load
+if (typeof window !== "undefined" && "speechSynthesis" in window) {
+  const loadVoices = () => {
+    try {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length > 0) {
+        cachedVoices = v;
+        voiceInitDone = true;
+      }
+    } catch {
+      // Ignored
+    }
+  };
+  loadVoices();
+  if ("onvoiceschanged" in window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }
+}
+
+function getBestVoice() {
+  if (!cachedVoices.length && typeof window !== "undefined" && "speechSynthesis" in window) {
+    cachedVoices = window.speechSynthesis.getVoices() || [];
+  }
+  return (
+    cachedVoices.find((v) => (v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Premium")) && v.lang.startsWith("en")) ||
+    cachedVoices.find((v) => v.lang.startsWith("en")) ||
+    cachedVoices[0] ||
+    null
+  );
+}
+
 function speakText(text, onEndOrRate, rateOrPitch = 1, pitch = 1) {
   let onEnd;
   let rate = 1;
@@ -16,7 +50,6 @@ function speakText(text, onEndOrRate, rateOrPitch = 1, pitch = 1) {
     pitchVal = typeof pitch === "number" ? pitch : 1;
   }
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    console.warn("Speech synthesis not supported in this browser.");
     if (onEnd) onEnd();
     return;
   }
@@ -26,14 +59,21 @@ function speakText(text, onEndOrRate, rateOrPitch = 1, pitch = 1) {
     return;
   }
   const now = performance.now();
-  if (cleanText === lastSpokenText && now - lastSpeakTime < 800) {
+  // Prevent duplicate rapid repeat within 250ms
+  if (cleanText === lastSpokenText && now - lastSpeakTime < 250) {
     if (onEnd) onEnd();
     return;
   }
   lastSpeakTime = now;
   lastSpokenText = cleanText;
+
   try {
+    // Unblock any paused audio buffer
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
     window.speechSynthesis.cancel();
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = Math.max(0.5, Math.min(2, rate));
     utterance.pitch = Math.max(0.5, Math.min(1.5, pitchVal));
@@ -41,8 +81,8 @@ function speakText(text, onEndOrRate, rateOrPitch = 1, pitch = 1) {
       utterance.onend = onEnd;
       utterance.onerror = onEnd;
     }
-    const voices = window.speechSynthesis.getVoices();
-    const naturalVoice = voices.find((v) => (v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Premium")) && v.lang.startsWith("en")) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+
+    const naturalVoice = getBestVoice();
     if (naturalVoice) {
       utterance.voice = naturalVoice;
     }
@@ -52,16 +92,19 @@ function speakText(text, onEndOrRate, rateOrPitch = 1, pitch = 1) {
     if (onEnd) onEnd();
   }
 }
+
 function stopSpeaking() {
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
 }
+
 class SpeechToSignListener {
   recognition = null;
   isListening = false;
   onResultCallback = null;
   onErrorCallback = null;
+
   constructor() {
     if (typeof window !== "undefined") {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -70,14 +113,17 @@ class SpeechToSignListener {
         this.recognition.continuous = true;
         this.recognition.interimResults = true;
         this.recognition.lang = "en-US";
+        this.recognition.maxAlternatives = 1;
+
         this.recognition.onresult = (event) => {
           let interimTranscript = "";
           let finalTranscript = "";
           for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
+            const item = event.results[i];
+            if (item.isFinal) {
+              finalTranscript += item[0].transcript;
             } else {
-              interimTranscript += event.results[i][0].transcript;
+              interimTranscript += item[0].transcript;
             }
           }
           if (this.onResultCallback) {
@@ -85,23 +131,29 @@ class SpeechToSignListener {
             this.onResultCallback(combined, !!finalTranscript);
           }
         };
+
         this.recognition.onerror = (event) => {
-          console.warn("Speech recognition error:", event.error);
+          if (event.error !== "no-speech") {
+            console.warn("Speech recognition warning:", event.error);
+          }
           if (this.onErrorCallback) {
             this.onErrorCallback(event.error);
           }
         };
+
         this.recognition.onend = () => {
           if (this.isListening) {
             try {
               this.recognition.start();
-            } catch (e) {
+            } catch {
+              // Ignore already started errors
             }
           }
         };
       }
     }
   }
+
   start(onResult, onError) {
     this.onResultCallback = onResult;
     this.onErrorCallback = onError || null;
@@ -110,23 +162,27 @@ class SpeechToSignListener {
       try {
         this.recognition.start();
       } catch (err) {
-        console.warn("SpeechRecognition start warning:", err);
+        console.warn("SpeechRecognition start note:", err);
       }
     }
   }
+
   stop() {
     this.isListening = false;
     if (this.recognition) {
       try {
         this.recognition.stop();
-      } catch (err) {
+      } catch {
+        // Ignore
       }
     }
   }
+
   isSupported() {
     return !!this.recognition;
   }
 }
+
 export {
   SpeechToSignListener,
   speakText,

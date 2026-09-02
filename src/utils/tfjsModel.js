@@ -261,6 +261,9 @@ class TFJSGestureClassifier {
   cachedTelemetry = null;
   lastTelemetryQueryTime = 0;
   isPredicting = false;
+  lastInferenceTimestamp = 0;
+  inferenceIntervalMs = 120;
+
   // Run Real-time TensorFlow.js Inference (Non-blocking & Zero-freeze)
   predict(landmarks, pose) {
     if (!this.model || !this.isInitialized) {
@@ -274,7 +277,7 @@ class TFJSGestureClassifier {
       };
     }
     const now = performance.now();
-    if (this.isPredicting || now - this.lastInferenceTimeMs < 60 && this.lastPredictions.length > 0) {
+    if (this.isPredicting || (now - this.lastInferenceTimestamp < this.inferenceIntervalMs && this.lastPredictions.length > 0)) {
       return {
         topSign: this.lastPredictions[0]?.sign || "HELLO",
         confidence: this.lastPredictions[0]?.confidence || 0.85,
@@ -283,6 +286,7 @@ class TFJSGestureClassifier {
     }
     try {
       this.isPredicting = true;
+      this.lastInferenceTimestamp = now;
       const t0 = performance.now();
       const features = this.extractFeatureVector(landmarks, pose);
       let probabilities = [];

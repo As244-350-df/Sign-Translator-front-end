@@ -43,8 +43,8 @@ const SignLanguageAvatar = ({
   const [isAudioSyncEnabled, setIsAudioSyncEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isBlinking, setIsBlinking] = useState(false);
-  const [breathingPhase, setBreathingPhase] = useState(0);
   const containerRef = useRef(null);
+  const torsoRef = useRef(null);
   useEffect(() => {
     const blinkInterval = setInterval(() => {
       setIsBlinking(true);
@@ -57,7 +57,9 @@ const SignLanguageAvatar = ({
     let t = 0;
     const loop = () => {
       t += 0.035 * playbackSpeed;
-      setBreathingPhase(Math.sin(t));
+      if (torsoRef.current) {
+        torsoRef.current.setAttribute("transform", `translate(0, ${(Math.sin(t) * 2.5).toFixed(2)})`);
+      }
       animId = requestAnimationFrame(loop);
     };
     animId = requestAnimationFrame(loop);
@@ -788,9 +790,9 @@ const SignLanguageAvatar = ({
             </defs>
 
             {
-    /* TORSO & SHOULDERS (with subtle organic breathing offset) */
+    /* TORSO & SHOULDERS (with subtle organic breathing offset via ref) */
   }
-            <g transform={`translate(0, ${breathingPhase * 2.5})`}>
+            <g ref={torsoRef} transform="translate(0, 0)">
               {
     /* Torso Silhouette */
   }

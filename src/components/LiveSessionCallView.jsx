@@ -36,6 +36,7 @@ import { LiveSessionRecorder } from "../utils/mediaRecorder";
 import { RecordedVideoModal } from "./RecordedVideoModal";
 import { AddSignModal } from "./AddSignModal";
 import { FreeFingerController } from "./FreeFingerController";
+import { LiveSessionOverlayHUD } from "./LiveSessionOverlayHUD";
 const LiveSessionCallView = ({
   interpreterId = "int-01",
   onEndCall,
@@ -68,8 +69,6 @@ const LiveSessionCallView = ({
   const [autoChatSigns, setAutoChatSigns] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [dictionaryMap, setDictionaryMap] = useState(SIGN_DICTIONARY);
-  const [activeSignMeaning, setActiveSignMeaning] = useState(SIGN_DICTIONARY["HELLO"] || null);
-  const [holdProgress, setHoldProgress] = useState(0);
   const [lastCommittedBanner, setLastCommittedBanner] = useState(null);
   const [recognizedSignLogs, setRecognizedSignLogs] = useState([
     { symbol: "\u{1F44B}", text: "Hello", confidence: 0.98, time: "10:02:14" },
@@ -82,17 +81,10 @@ const LiveSessionCallView = ({
   const [cameraPan, setCameraPan] = useState({ x: 0, y: 0 });
   const [isAutoCentering, setIsAutoCentering] = useState(settings.autoCenterCamera ?? false);
   const [isRecording, setIsRecording] = useState(false);
-  const [recordedDuration, setRecordedDuration] = useState(0);
   const [activeRecordingResult, setActiveRecordingResult] = useState(null);
   const [showRecordedModal, setShowRecordedModal] = useState(false);
   const [useRealCameraLocal, setUseRealCameraLocal] = useState(true);
   const [mainViewMode, setMainViewMode] = useState("interpreter");
-  const [tfStatus, setTfStatus] = useState({
-    fps: 60,
-    gesture: "\u{1F590}\uFE0F HELLO",
-    confidence: 0.98,
-    isReal: false
-  });
   useEffect(() => {
     handTrackerRef.current.setAutoCenter(isAutoCentering);
   }, [isAutoCentering]);
@@ -211,23 +203,6 @@ const LiveSessionCallView = ({
         tracker.setElements(activeVideo, canvas);
       }
       const detection = tracker.processFrame(time);
-      if (detection.autoCentering && detection.autoCentering.enabled) {
-        setCameraZoom(detection.autoCentering.currentZoom);
-        setCameraPan({
-          x: detection.autoCentering.panOffsetX,
-          y: detection.autoCentering.panOffsetY
-        });
-      }
-      setTfStatus({
-        fps: detection.fps,
-        gesture: detection.gesture,
-        confidence: detection.confidence,
-        isReal: detection.isRealHandDetected
-      });
-      if (detection.signMeaning) {
-        setActiveSignMeaning(detection.signMeaning);
-      }
-      setHoldProgress(detection.holdProgress);
       if (detection.isCommitted && detection.signMeaning) {
         const sign = detection.signMeaning;
         const timeStr = (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -336,21 +311,16 @@ const LiveSessionCallView = ({
   };
   const handleTestSign = (signKey) => {
     handTrackerRef.current.forceSign(signKey);
-    const meaning = dictionaryMap[signKey];
-    if (meaning) {
-      setActiveSignMeaning(meaning);
-    }
   };
   const handleSaveSign = (key, newSign) => {
     const regKey = handTrackerRef.current.registerCustomSign(key, newSign);
     const updated = handTrackerRef.current.getDictionary();
     setDictionaryMap({ ...updated });
-    setActiveSignMeaning(newSign);
     handTrackerRef.current.forceSign(regKey);
   };
-  const handleCommitCurrentSignNow = () => {
-    if (!activeSignMeaning) return;
-    const sign = activeSignMeaning;
+  const handleCommitCurrentSignNow = (customSign) => {
+    const sign = customSign || handTrackerRef.current.getCurrentSignMeaning();
+    if (!sign) return;
     const timeStr = (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setLastCommittedBanner({
       symbol: sign.symbol,
@@ -362,7 +332,7 @@ const LiveSessionCallView = ({
       {
         symbol: sign.symbol,
         text: sign.translatedText,
-        confidence: sign.confidence,
+        confidence: sign.confidence || 0.98,
         time: timeStr
       }
     ]);
@@ -390,12 +360,9 @@ const LiveSessionCallView = ({
       }
     } else {
       if (!canvas) return;
-      const started = await recorder.startRecording(canvas, localVideoRef.current, localStreamRef.current, (sec) => {
-        setRecordedDuration(sec);
-      });
+      const started = await recorder.startRecording(canvas, localVideoRef.current, localStreamRef.current);
       if (started) {
         setIsRecording(true);
-        setRecordedDuration(0);
       }
     }
   };
@@ -548,59 +515,14 @@ const LiveSessionCallView = ({
               ⚡ Sign Speed: {signSpeed}x
             </div>}
 
-          {
-    /* Real-Time Live Sign Recognition HUD & Captions Overlay */
-  }
-          <div className="absolute bottom-28 inset-x-4 sm:inset-x-12 z-10 flex flex-col items-center space-y-2">
-            
-            {
-    /* Active Real-Time Hand Sign Detection Bar */
-  }
-            {activeSignMeaning && <div className="w-full max-w-3xl bg-slate-950/90 backdrop-blur-md border border-indigo-500/40 rounded-2xl px-4 py-2.5 shadow-xl flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center space-x-3 min-w-0">
-                  <div className="relative flex-shrink-0">
-                    <span className="text-2xl">{activeSignMeaning.symbol}</span>
-                    {holdProgress > 0 && <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-indigo-500 flex items-center justify-center text-[8px] font-bold text-white">
-                        {Math.round(holdProgress * 100)}%
-                      </div>}
-                  </div>
-                  <div className="truncate">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-bold text-white text-sm truncate">{activeSignMeaning.signName}</span>
-                      <span className="px-1.5 py-0.5 rounded-md bg-indigo-900/60 text-indigo-300 font-mono text-[10px] font-bold">
-                        {Math.round(activeSignMeaning.confidence * 100)}% MATCH
-                      </span>
-                      {activeSignMeaning.isCustom && <span className="px-1.5 py-0.5 rounded-md bg-purple-900/60 text-purple-300 text-[10px] font-bold">
-                          CUSTOM SIGN
-                        </span>}
-                    </div>
-                    <p className="text-slate-300 text-[11px] truncate">
-                      Meaning: <span className="text-emerald-400 font-semibold">"{activeSignMeaning.translatedText}"</span> • {activeSignMeaning.meaning}
-                    </p>
-                  </div>
-                </div>
-
-                {
-    /* Instant Action Buttons */
-  }
-                <div className="flex items-center space-x-1.5 flex-shrink-0">
-                  <button
-    onClick={handleCommitCurrentSignNow}
-    className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] flex items-center space-x-1 transition-all shadow-md active:scale-95"
-    title="Commit and translate this sign now"
-  >
-                    <Zap className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Send Sign</span>
-                  </button>
-                  <button
-    onClick={() => setShowSignDeck(true)}
-    className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold"
-    title="Open Sign Recognition Deck"
-  >
-                    <BookOpen className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>}
+          {/* Real-Time Live Sign Recognition HUD & Captions Overlay */}
+          <div className="absolute bottom-28 inset-x-4 sm:inset-x-12 z-10 flex flex-col items-center space-y-2 pointer-events-auto">
+            {/* Active Real-Time Hand Sign Detection Bar */}
+            <LiveSessionOverlayHUD
+              tracker={handTrackerRef.current}
+              onCommitSign={handleCommitCurrentSignNow}
+              onOpenSignDeck={() => setShowSignDeck(true)}
+            />
 
             {
     /* In-Call Real-Time Captions Stream */

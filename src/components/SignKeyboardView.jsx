@@ -31,7 +31,6 @@ const SignKeyboardView = ({
   const [practiceTarget, setPracticeTarget] = useState("A");
   const [practiceScore, setPracticeScore] = useState(0);
   const [activeFingerFilter, setActiveFingerFilter] = useState("all");
-  const [lastClickedKeyId, setLastClickedKeyId] = useState(null);
   const numbersData = Array.from({ length: 10 }, (_, i) => ({
     id: `num-${i}`,
     name: `${i}`,
@@ -44,12 +43,8 @@ const SignKeyboardView = ({
   }));
   const handleKeyPress = (item) => {
     setSelectedKey(item);
-    setLastClickedKeyId(item.id);
     const fingerProfile = getFingerProfileForSign(item.name);
     triggerHapticFeedback(fingerProfile.hapticPattern, fingerProfile.soundPitch, settings.soundEffects);
-    setTimeout(() => {
-      setLastClickedKeyId((prev) => prev === item.id ? null : prev);
-    }, 450);
     if (activeCategory === "words") {
       setComposedSentence((prev) => prev ? `${prev} ${item.name}` : item.name);
     } else {
@@ -251,28 +246,14 @@ const SignKeyboardView = ({
             {activeCategory === "alphabet" && <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-7 gap-2.5">
                 {filterByFinger(SIGN_ALPHABET).map((item) => {
     const isSelected = selectedKey.id === item.id;
-    const isJustClicked = lastClickedKeyId === item.id;
     const prof = getFingerProfileForSign(item.name);
     return <motion.button
       key={item.id}
       onClick={() => handleKeyPress(item)}
       whileHover={{ scale: 1.04, y: -2 }}
       whileTap={{ scale: 0.94 }}
-      className={`relative flex flex-col items-center justify-between p-3 rounded-2xl border-2 transition-all duration-150 group overflow-hidden ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/20" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 hover:bg-white dark:hover:bg-slate-800"} ${isJustClicked ? "ring-4 ring-cyan-400/60 shadow-lg" : ""}`}
+      className={`relative flex flex-col items-center justify-between p-3 rounded-2xl border-2 transition-all duration-150 group overflow-hidden cursor-pointer ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/20" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 hover:bg-white dark:hover:bg-slate-800"}`}
     >
-                      {
-      /* Active Momentary Pulse Ripple */
-    }
-                      <AnimatePresence>
-                        {isJustClicked && <motion.span
-      initial={{ scale: 0.2, opacity: 0.8 }}
-      animate={{ scale: 2.2, opacity: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="absolute inset-0 bg-cyan-400/25 rounded-2xl pointer-events-none"
-    />}
-                      </AnimatePresence>
-
                       <span className="text-2xl font-black text-slate-900 dark:text-white tracking-wider group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
                         {item.name}
                       </span>
@@ -302,14 +283,13 @@ const SignKeyboardView = ({
             {activeCategory === "numbers" && <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 {filterByFinger(numbersData).map((item) => {
     const isSelected = selectedKey.id === item.id;
-    const isJustClicked = lastClickedKeyId === item.id;
     const prof = getFingerProfileForSign(item.name);
     return <motion.button
       key={item.id}
       onClick={() => handleKeyPress(item)}
       whileHover={{ scale: 1.04, y: -2 }}
       whileTap={{ scale: 0.94 }}
-      className={`relative flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all overflow-hidden ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/20" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 hover:border-indigo-300"} ${isJustClicked ? "ring-4 ring-cyan-400/60 shadow-lg" : ""}`}
+      className={`relative flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all overflow-hidden cursor-pointer ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md ring-2 ring-indigo-500/20" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 hover:border-indigo-300"}`}
     >
                       <span className="text-3xl font-black text-slate-900 dark:text-white">
                         {item.name}
@@ -339,14 +319,13 @@ const SignKeyboardView = ({
             {activeCategory === "words" && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                 {filterByFinger(COMMON_SIGNS).map((item) => {
     const isSelected = selectedKey.id === item.id;
-    const isJustClicked = lastClickedKeyId === item.id;
     const prof = getFingerProfileForSign(item.name);
     return <motion.button
       key={item.id}
       onClick={() => handleKeyPress(item)}
       whileHover={{ scale: 1.03, y: -2 }}
       whileTap={{ scale: 0.95 }}
-      className={`relative flex flex-col items-start p-3 rounded-2xl border-2 transition-all overflow-hidden ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 hover:border-indigo-300"} ${isJustClicked ? "ring-4 ring-cyan-400/60 shadow-lg" : ""}`}
+      className={`relative flex flex-col items-start p-3 rounded-2xl border-2 transition-all overflow-hidden cursor-pointer ${isSelected ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-600 dark:border-indigo-400 shadow-md" : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 hover:border-indigo-300"}`}
     >
                       <span className="text-sm font-bold text-slate-900 dark:text-white">
                         {item.name}

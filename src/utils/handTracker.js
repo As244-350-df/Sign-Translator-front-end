@@ -894,6 +894,13 @@ class RealtimeHandTracker {
   getDictionary() {
     return SIGN_DICTIONARY;
   }
+  getCurrentSignMeaning() {
+    return SIGN_DICTIONARY[this.currentSignKey] || SIGN_DICTIONARY["HELLO"];
+  }
+  getHoldProgress() {
+    const elapsed = performance.now() - this.signHoldStartTime;
+    return Math.min(1, Math.max(0, elapsed / this.HOLD_DURATION_MS));
+  }
   setFreePose(newPose) {
     this.fingerPose = {
       ...this.fingerPose,

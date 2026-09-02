@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Brain,
   Cpu,
@@ -13,9 +13,10 @@ import {
   Database,
   Gauge
 } from "lucide-react";
-import { TF_SIGN_CLASSES } from "../utils/tfjsModel";
+import { TF_SIGN_CLASSES, tfjsClassifier } from "../utils/tfjsModel";
+
 const TensorFlowEngineHUD = ({
-  telemetry,
+  telemetry: propTelemetry,
   isEnabled,
   onToggleEnabled,
   onTrainSample,
@@ -26,6 +27,19 @@ const TensorFlowEngineHUD = ({
   const [isTraining, setIsTraining] = useState(false);
   const [trainingFeedback, setTrainingFeedback] = useState(null);
   const [isSwitchingBackend, setIsSwitchingBackend] = useState(false);
+  const [internalTelemetry, setInternalTelemetry] = useState(() => propTelemetry || tfjsClassifier.getTelemetry());
+
+  useEffect(() => {
+    // Only poll telemetry when expanded or mounted to keep CPU idle
+    const updateTelemetry = () => {
+      setInternalTelemetry(tfjsClassifier.getTelemetry());
+    };
+    updateTelemetry();
+    const interval = setInterval(updateTelemetry, isExpanded ? 500 : 1200);
+    return () => clearInterval(interval);
+  }, [isExpanded]);
+
+  const telemetry = propTelemetry || internalTelemetry;
   const activeBackend = telemetry?.backend || "webgl";
   const numTensors = telemetry?.numTensors ?? 0;
   const memoryKB = telemetry?.memoryKB ?? 0;

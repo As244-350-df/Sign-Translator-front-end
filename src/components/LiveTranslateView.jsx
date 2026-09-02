@@ -47,6 +47,9 @@ import { TensorFlowEngineHUD } from "./TensorFlowEngineHUD";
 import { CameraDiagnosticOverlay } from "./CameraDiagnosticOverlay";
 import { SignLanguageAvatar } from "./SignLanguageAvatar";
 import { VideoSourcePanel } from "./VideoSourcePanel";
+import { RecordingControls } from "./RecordingControls";
+import { RecordingDurationPill } from "./RecordingDurationPill";
+import { LiveGestureOverlayHUD } from "./LiveGestureOverlayHUD";
 import { syntheticVideoEngine } from "../utils/demoVideoFeeds";
 import { isInsideIframe, getSafeCurrentUrl } from "../utils/environment";
 const LiveTranslateView = ({
@@ -78,37 +81,9 @@ const LiveTranslateView = ({
   const [showAddSignModal, setShowAddSignModal] = useState(false);
   const [showFreeFingerStudio, setShowFreeFingerStudio] = useState(true);
   const [dictionaryMap, setDictionaryMap] = useState(SIGN_DICTIONARY);
-  const [currentFingerPose, setCurrentFingerPose] = useState({
-    thumb: 1,
-    index: 1,
-    middle: 1,
-    ring: 1,
-    pinky: 1,
-    spread: 0.8,
-    wristAngle: 0,
-    rotation: 0,
-    isFreeMotion: true,
-    proceduralAnimation: "none"
-  });
-  const [tfTelemetry, setTfTelemetry] = useState({
-    fps: 60,
-    gesture: "🖐️ HELLO",
-    confidence: 0.98,
-    isReal: false,
-    holdProgress: 0.5
-  });
-  const [tfEngineTelemetry, setTfEngineTelemetry] = useState(void 0);
+  const [selectedTestSignKey, setSelectedTestSignKey] = useState("HELLO");
   const [isTfModelEnabled, setIsTfModelEnabled] = useState(true);
-  const [activeSignMeaning, setActiveSignMeaning] = useState(SIGN_DICTIONARY["HELLO"] || {
-    symbol: "🖐️",
-    signName: "HELLO",
-    translatedText: "Hello",
-    meaning: "Standard friendly greeting",
-    category: "greetings",
-    confidence: 0.97
-  });
   const [isRecording, setIsRecording] = useState(false);
-  const [recordedDuration, setRecordedDuration] = useState(0);
   const [activeRecordingResult, setActiveRecordingResult] = useState(null);
   const [showRecordedModal, setShowRecordedModal] = useState(false);
   const [recognizedSigns, setRecognizedSigns] = useState([
@@ -130,15 +105,6 @@ const LiveTranslateView = ({
   const [showZoomMenu, setShowZoomMenu] = useState(false);
   const [calibrationScale, setCalibrationScale] = useState(1);
   const [isAutoCentering, setIsAutoCentering] = useState(settings.autoCenterCamera ?? false);
-  const [autoCenterTelemetry, setAutoCenterTelemetry] = useState({
-    enabled: settings.autoCenterCamera ?? false,
-    isTracking: false,
-    currentZoom: 1,
-    panOffsetX: 0,
-    panOffsetY: 0,
-    handFramedScore: 0,
-    statusText: "Manual Zoom & Pan"
-  });
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -503,10 +469,7 @@ const LiveTranslateView = ({
     } else {
       tracker.setElements(null, canvas);
     }
-    let lastTelemetryTime = 0;
-    let lastActiveSignKey = "";
     let lastDetectionTime = 0;
-    let lastReportedGesture = "";
     const DETECTION_INTERVAL_MS = 35;
 
     const render = (time) => {
@@ -529,25 +492,6 @@ const LiveTranslateView = ({
         }
         const detection = tracker.processFrame(time, shouldRunDetection);
 
-        // Throttle UI telemetry state updates (only update on gesture changes or every 450ms)
-        if (now - lastTelemetryTime > 450 || (detection.gesture && detection.gesture !== lastReportedGesture)) {
-          lastTelemetryTime = now;
-          lastReportedGesture = detection.gesture;
-          if (detection.autoCentering && detection.autoCentering.enabled) {
-            setAutoCenterTelemetry(detection.autoCentering);
-          }
-          setTfTelemetry({
-            fps: detection.fps,
-            gesture: detection.gesture,
-            confidence: detection.confidence,
-            isReal: detection.isRealHandDetected,
-            holdProgress: detection.holdProgress
-          });
-        }
-        if (detection.signMeaning && detection.signMeaning.signName !== lastActiveSignKey) {
-          lastActiveSignKey = detection.signMeaning.signName;
-          setActiveSignMeaning(detection.signMeaning);
-        }
         if (detection.isCommitted && detection.signMeaning) {
           const textOutput = detection.signMeaning.translatedText;
           setFullSentence((prev) => {
@@ -599,17 +543,14 @@ const LiveTranslateView = ({
     inputSourceMode
   ]);
   const handleTestSign = (signKey) => {
+    setSelectedTestSignKey(signKey);
     handTrackerRef.current.forceSign(signKey);
-    const meaning = dictionaryMap[signKey];
-    if (meaning) {
-      setActiveSignMeaning(meaning);
-    }
   };
   const handleSaveSign = (key, newSign) => {
     const registeredKey = handTrackerRef.current.registerCustomSign(key, newSign);
     const updated = handTrackerRef.current.getDictionary();
     setDictionaryMap({ ...updated });
-    setActiveSignMeaning(newSign);
+    setSelectedTestSignKey(registeredKey);
     handTrackerRef.current.forceSign(registeredKey);
   };
   const handleDeleteCustomSign = (e, key) => {
@@ -618,9 +559,10 @@ const LiveTranslateView = ({
     const updated = handTrackerRef.current.getDictionary();
     setDictionaryMap({ ...updated });
   };
-  const handleCommitCurrentSign = () => {
-    if (!activeSignMeaning) return;
-    const textOutput = activeSignMeaning.translatedText;
+  const handleCommitCurrentSign = (customSign) => {
+    const sign = customSign || handTrackerRef.current.getCurrentSignMeaning();
+    if (!sign) return;
+    const textOutput = sign.translatedText;
     setFullSentence((prev) => {
       if (!prev || prev.trim() === "") {
         return textOutput.charAt(0).toUpperCase() + textOutput.slice(1);
@@ -630,8 +572,8 @@ const LiveTranslateView = ({
     setRecognizedSigns((prev) => [
       ...prev.slice(-14),
       {
-        text: `${activeSignMeaning.symbol} ${activeSignMeaning.translatedText.toUpperCase()}`,
-        confidence: activeSignMeaning.confidence,
+        text: `${sign.symbol} ${sign.translatedText.toUpperCase()}`,
+        confidence: sign.confidence || 0.98,
         timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         hand: "right",
         type: "word"
@@ -655,21 +597,12 @@ const LiveTranslateView = ({
       const started = await recorder.startRecording(
         canvas,
         videoEl,
-        mediaStreamRef.current,
-        (sec) => {
-          setRecordedDuration(sec);
-        }
+        mediaStreamRef.current
       );
       if (started) {
         setIsRecording(true);
-        setRecordedDuration(0);
       }
     }
-  };
-  const formatRecordedTime = (secs) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
   useEffect(() => {
     speechListenerRef.current = new SpeechToSignListener();
@@ -703,7 +636,6 @@ const LiveTranslateView = ({
   };
   const handleSwitchBackend = async (backend) => {
     await handTrackerRef.current.setTensorFlowBackend(backend);
-    setTfEngineTelemetry(handTrackerRef.current.getTensorFlowTelemetry());
   };
   const handleToggleTfModel = (enabled) => {
     setIsTfModelEnabled(enabled);
@@ -1221,8 +1153,8 @@ const LiveTranslateView = ({
 
                           {isAutoCentering && <div className="mt-2 pt-2 border-t border-emerald-900/60 flex items-center justify-between text-[11px]">
                               <span className="text-emerald-300 font-mono flex items-center space-x-1">
-                                <span className={`w-2 h-2 rounded-full ${autoCenterTelemetry.isTracking ? "bg-emerald-400 animate-ping" : "bg-amber-400 animate-pulse"}`} />
-                                <span>{autoCenterTelemetry.statusText}</span>
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                <span>Auto Tracking Hand</span>
                               </span>
                               <span className="text-slate-300 font-mono">
                                 Zoom: <strong className="text-emerald-400">{cameraZoom.toFixed(2)}x</strong>
@@ -1355,100 +1287,20 @@ const LiveTranslateView = ({
                       </div>}
                   </div>
 
-                  {
-      /* Top Overlay Badges & Diagnostic Quick Bar */
-    }
-                  <div className="absolute top-4 left-4 flex flex-wrap items-center gap-2 z-20">
-                    <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="flex items-center space-x-2 bg-slate-900/90 hover:bg-slate-800 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-700/80 shadow-lg cursor-pointer transition-colors"
-      title="Click to inspect camera hardware, resolution, and permission diagnostics"
-    >
-                      <span className={`flex h-2.5 w-2.5 rounded-full ${useRealWebcam ? cameraStreamStatus === "active" && tfTelemetry.isReal ? "bg-emerald-400 animate-ping" : cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission" ? "bg-amber-400 animate-pulse" : cameraStreamStatus === "error" ? "bg-rose-400" : "bg-emerald-400" : "bg-indigo-400 animate-pulse"}`} />
-                      <span className={`text-[11px] font-bold uppercase tracking-wider ${useRealWebcam ? cameraStreamStatus === "active" ? "text-emerald-400" : cameraStreamStatus === "error" ? "text-rose-400" : "text-amber-400" : "text-indigo-400"}`}>
-                        {useRealWebcam ? cameraStreamStatus === "active" ? tfTelemetry.isReal ? "TensorFlow Camera HD" : "Camera Active" : cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission" ? "Starting Camera..." : cameraStreamStatus === "error" ? "Camera Offline" : "Webcam" : "AI Simulation Mode"} • {settings.primarySignLanguage}
-                      </span>
-                    </button>
-
-                    {
-      /* Quick Resolution & Hardware Permission Pill */
-    }
-                    {useRealWebcam && <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="flex items-center space-x-1.5 bg-slate-900/90 hover:bg-slate-800 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-slate-700/80 text-[11px] font-mono text-slate-300 hover:text-white transition-all cursor-pointer shadow-lg"
-      title="Camera Resolution & Permission Diagnostics"
-    >
-                        <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                        <span className="text-white font-bold">
-                          {activeStreamResolution ? `${activeStreamResolution.width}\xD7${activeStreamResolution.height}` : "720p HD"}
-                        </span>
-                        <span className="text-slate-600">|</span>
-                        <span className={hardwarePermissionStatus === "granted" ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
-                          {hardwarePermissionStatus === "granted" ? "Perm: OK" : `Perm: ${hardwarePermissionStatus}`}
-                        </span>
-                      </button>}
-
-                    {
-      /* Troubleshoot / Why Webcam Isn't Working Direct Pill */
-    }
-                    <button
-      onClick={() => setShowDiagnosticsOverlay(true)}
-      className="flex items-center space-x-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-amber-500/40 text-[11px] font-bold transition-all cursor-pointer shadow-lg"
-      title="Why is Webcam Not Working? Click for instant hardware scan, iframe checks, and fixes"
-    >
-                      <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Webcam Help</span>
-                    </button>
-
-                    {isRecording && <div className="flex items-center space-x-1.5 bg-rose-950/90 backdrop-blur-md px-3 py-1 rounded-full border border-rose-700 text-rose-300 text-xs font-mono font-bold animate-pulse">
-                        <Circle className="w-2.5 h-2.5 fill-rose-500 text-rose-500" />
-                        <span>REC {formatRecordedTime(recordedDuration)}</span>
-                      </div>}
+                  {/* Isolated Real-Time Overlay HUD & Diagnostics */}
+                  <LiveGestureOverlayHUD
+                    tracker={handTrackerRef.current}
+                    useRealWebcam={useRealWebcam}
+                    cameraStreamStatus={cameraStreamStatus}
+                    primarySignLanguage={settings.primarySignLanguage}
+                    activeStreamResolution={activeStreamResolution}
+                    hardwarePermissionStatus={hardwarePermissionStatus}
+                    onShowDiagnostics={() => setShowDiagnosticsOverlay(true)}
+                    onCommitSign={handleCommitCurrentSign}
+                  />
+                  <div className="absolute top-4 right-4 z-20 pointer-events-auto">
+                    <RecordingDurationPill recorder={recorderRef.current} isRecording={isRecording} />
                   </div>
-
-                  {
-      /* Bottom Active Translation Card */
-    }
-                  {(!useRealWebcam || cameraStreamStatus === "active") && <div className="absolute bottom-4 left-4 right-4 bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl border border-slate-700/80 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-10 animate-in fade-in duration-200">
-                      <div className="flex items-center space-x-3.5">
-                        <div className="w-12 h-12 rounded-2xl bg-indigo-600/30 border border-indigo-500/60 flex items-center justify-center text-2xl shadow-inner">
-                          {activeSignMeaning.symbol}
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs text-indigo-300 font-bold uppercase tracking-wider">
-                              {activeSignMeaning.signName}
-                            </span>
-                            {activeSignMeaning.isCustom && <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-300 font-extrabold">
-                                Custom Sign
-                              </span>}
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                              {Math.round(activeSignMeaning.confidence * 100)}% Match
-                            </span>
-                          </div>
-                          <p className="text-lg font-black text-white tracking-wide mt-0.5">
-                            "{activeSignMeaning.translatedText}"
-                          </p>
-                          <p className="text-[11px] text-slate-300 line-clamp-1 max-w-md">
-                            {activeSignMeaning.meaning}
-                          </p>
-                        </div>
-                      </div>
-
-                      {
-      /* Commit & Auto Progress indicator */
-    }
-                      <div className="flex items-center space-x-2 self-end sm:self-center">
-                        <button
-                          onClick={handleCommitCurrentSign}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-emerald-900/30 transition-all cursor-pointer"
-                          title="Commit this translated sign immediately to the sentence"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add to Text</span>
-                        </button>
-                      </div>
-                    </div>}
                 </>
               ) : (
                 <div className="text-center p-8">
@@ -1531,14 +1383,11 @@ const LiveTranslateView = ({
                 {
       /* Record Translation Video Button */
     }
-                <button
-      onClick={handleToggleRecording}
-      className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all ${isRecording ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse shadow-md" : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200"}`}
-      title={isRecording ? "Stop Recording" : "Record Translation Session"}
-    >
-                  <Circle className="w-3.5 h-3.5 fill-current" />
-                  <span>{isRecording ? `REC ${formatRecordedTime(recordedDuration)}` : "Record"}</span>
-                </button>
+                <RecordingControls
+                  isRecording={isRecording}
+                  onToggleRecording={handleToggleRecording}
+                  recorder={recorderRef.current}
+                />
 
                 {
       /* Camera Hardware Diagnostics & Stream Resolution Inspector */
@@ -1632,25 +1481,22 @@ const LiveTranslateView = ({
               </div>
             </div>
 
-            {
-      /* Free Finger Articulation & Dynamic Motion Studio */
-    }
+            {/* Free Finger Articulation & Dynamic Motion Studio */}
             {showFreeFingerStudio && <FreeFingerController
-      handTracker={handTrackerRef.current}
-      currentPose={currentFingerPose}
-      onPoseChange={(p) => setCurrentFingerPose(p)}
-    />}
+              handTracker={handTrackerRef.current}
+              currentPose={null}
+              onPoseChange={(p) => {
+                handTrackerRef.current.setFreePose(p);
+              }}
+            />}
 
-            {
-      /* Pure JavaScript TensorFlow.js Deep Learning Engine HUD */
-    }
+            {/* Pure JavaScript TensorFlow.js Deep Learning Engine HUD */}
             <TensorFlowEngineHUD
-      telemetry={tfEngineTelemetry}
-      isEnabled={isTfModelEnabled}
-      onToggleEnabled={handleToggleTfModel}
-      onTrainSample={handleTrainSample}
-      onSwitchBackend={handleSwitchBackend}
-    />
+              isEnabled={isTfModelEnabled}
+              onToggleEnabled={handleToggleTfModel}
+              onTrainSample={handleTrainSample}
+              onSwitchBackend={handleSwitchBackend}
+            />
 
             {
       /* Interactive Sign Language Cheatsheet & Live Symbol Tester */
@@ -1692,12 +1538,13 @@ const LiveTranslateView = ({
     }
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto pr-1">
                 {filteredDictionary.map((item) => {
-      const isActive = activeSignMeaning.signName === item.signName;
-      return <div
-        key={item.key}
-        onClick={() => handleTestSign(item.key)}
-        className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer relative group ${isActive ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs" : "bg-slate-50 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300"}`}
-      >
+                  const isActive = selectedTestSignKey === item.key;
+                  return (
+                    <div
+                      key={item.key}
+                      onClick={() => handleTestSign(item.key)}
+                      className={`p-2.5 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer relative group ${isActive ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs" : "bg-slate-50 dark:bg-slate-900/50 border-slate-200/80 dark:border-slate-800 hover:border-indigo-300"}`}
+                    >
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-2xl">{item.symbol}</span>
                         <div className="flex items-center space-x-1">
@@ -1724,8 +1571,9 @@ const LiveTranslateView = ({
                           {item.signName}
                         </p>
                       </div>
-                    </div>;
-    })}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
