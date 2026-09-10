@@ -15,7 +15,7 @@ export const DarkFeedTroubleshooterTab = ({
           Diagnosing Black or Dark Video Feeds:
         </p>
         <p className="leading-relaxed">
-          If the stream status shows "Camera Active" or "TensorFlow Camera HD", but the visual feed is completely black, follow the automated checklist below to identify the root cause.
+          If the stream status shows "Camera Active" or "Gemini AI Stream HD", but the visual feed is completely black, follow the automated checklist below to identify the root cause.
         </p>
       </div>
 

@@ -7,7 +7,7 @@ import { LiveSessionRecorder } from "../utils/mediaRecorder";
 import { RecordedVideoModal } from "./RecordedVideoModal";
 import { AddSignModal } from "./AddSignModal";
 import { FreeFingerController } from "./FreeFingerController";
-import { TensorFlowEngineHUD } from "./TensorFlowEngineHUD";
+import { AIStreamEngineHUD } from "./AIStreamEngineHUD";
 import { CameraDiagnosticOverlay } from "./CameraDiagnosticOverlay";
 import { SignLanguageAvatar } from "./SignLanguageAvatar";
 import { VideoSourcePanel } from "./VideoSourcePanel";
@@ -36,7 +36,7 @@ export const LiveTranslateView = ({
   const [showFreeFingerStudio, setShowFreeFingerStudio] = useState(true);
   const [dictionaryMap, setDictionaryMap] = useState(SIGN_DICTIONARY);
   const [selectedTestSignKey, setSelectedTestSignKey] = useState("HELLO");
-  const [isTfModelEnabled, setIsTfModelEnabled] = useState(true);
+  const [isAIStreamEnabled, setIsAIStreamEnabled] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [activeRecordingResult, setActiveRecordingResult] = useState(null);
   const [showRecordedModal, setShowRecordedModal] = useState(false);
@@ -215,11 +215,11 @@ export const LiveTranslateView = ({
     return tracking.handTrackerRef.current.trainCurrentPoseAsSample(label);
   };
   const handleSwitchBackend = async (backend) => {
-    await tracking.handTrackerRef.current.setTensorFlowBackend(backend);
+    await tracking.handTrackerRef.current.setAIStreamBackend(backend);
   };
-  const handleToggleTfModel = (enabled) => {
-    setIsTfModelEnabled(enabled);
-    tracking.handTrackerRef.current.setUseTensorFlowClassifier(enabled);
+  const handleToggleAIStream = (enabled) => {
+    setIsAIStreamEnabled(enabled);
+    tracking.handTrackerRef.current.setUseAIStream(enabled);
   };
   const handleSpeakTranscript = () => {
     const textToSpeak = fullSentence || recognizedSigns.map((s) => s.text).join(" ");
@@ -230,6 +230,18 @@ export const LiveTranslateView = ({
     navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleGeminiTranslateSentence = async () => {
+    const signsToTranslate = recognizedSigns.length > 0
+      ? recognizedSigns
+      : fullSentence.split(" ").filter(Boolean).map((w) => ({ text: w }));
+
+    if (signsToTranslate.length === 0) return;
+
+    await tracking.translateSentenceWithGemini(signsToTranslate, (token, full) => {
+      setFullSentence(full);
+    });
   };
 
   const parsedWords = textInput.toUpperCase().split(/\s+/).filter(Boolean);
@@ -344,6 +356,10 @@ export const LiveTranslateView = ({
               onToggleMesh={() => tracking.setShowMesh(!tracking.showMesh)}
               autoSpeakOnCommit={tracking.autoSpeakOnCommit}
               onToggleAutoSpeak={() => tracking.setAutoSpeakOnCommit(!tracking.autoSpeakOnCommit)}
+              geminiTranslationEnabled={tracking.geminiTranslationEnabled}
+              onToggleGeminiTranslation={() => tracking.setGeminiTranslationEnabled(!tracking.geminiTranslationEnabled)}
+              onCaptureGeminiVision={tracking.captureGeminiVision}
+              isGeminiVisionLoading={tracking.isGeminiVisionLoading}
               isRecording={isRecording}
               onToggleRecording={handleToggleRecording}
               recorder={recorderRef.current}
@@ -375,9 +391,9 @@ export const LiveTranslateView = ({
               />
             )}
 
-            <TensorFlowEngineHUD
-              isEnabled={isTfModelEnabled}
-              onToggleEnabled={handleToggleTfModel}
+            <AIStreamEngineHUD
+              isEnabled={isAIStreamEnabled}
+              onToggleEnabled={handleToggleAIStream}
               onTrainSample={handleTrainSample}
               onSwitchBackend={handleSwitchBackend}
             />
@@ -403,6 +419,8 @@ export const LiveTranslateView = ({
             copied={copied}
             highContrastCaptions={settings.highContrastCaptions}
             recognizedSigns={recognizedSigns}
+            onGeminiTranslateSentence={handleGeminiTranslateSentence}
+            isGeminiTranslating={tracking.isGeminiStreaming}
           />
         </div>
       ) : (

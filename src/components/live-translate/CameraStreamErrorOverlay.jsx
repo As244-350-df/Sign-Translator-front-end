@@ -46,7 +46,7 @@ export const CameraStreamErrorOverlay = ({
         <h4 className="text-base font-bold text-white mb-1.5 max-w-sm">
           {cameraStreamStatus === "requesting_permission"
             ? 'Please click "Allow" in your browser prompt'
-            : "Connecting video hardware to TensorFlow tracking engine..."}
+            : "Connecting video hardware to Gemini AI Stream engine..."}
         </h4>
 
         <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">

@@ -26,7 +26,7 @@ const RecordedVideoModal = ({ recording, onClose }) => {
             </div>
             <div>
               <h3 className="font-bold text-sm text-white">Session Video Recording Ready</h3>
-              <p className="text-xs text-slate-400">Encrypted local archive with TensorFlow skeleton overlay</p>
+              <p className="text-xs text-slate-400">Encrypted local archive with Gemini AI Stream skeleton overlay</p>
             </div>
           </div>
           <button

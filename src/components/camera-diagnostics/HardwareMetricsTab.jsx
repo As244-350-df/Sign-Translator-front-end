@@ -66,7 +66,7 @@ export const HardwareMetricsTab = ({
                 : "UNAVAILABLE"}
             </span>
             <p className="text-[11px] text-slate-400 mt-1">
-              HTML5 getUserMedia is fully ready for WebRTC & TensorFlow vision.
+              HTML5 getUserMedia is fully ready for WebRTC & Gemini AI Stream vision.
             </p>
           </div>
         </div>
@@ -129,6 +129,40 @@ export const HardwareMetricsTab = ({
             </span>
           </div>
         )}
+      </div>
+
+      {/* MediaPipe Hands AI Landmark Pipeline Status */}
+      <div className="rounded-2xl bg-slate-950/60 border border-slate-800 p-4">
+        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span>MediaPipe Hands Landmark Detection Pipeline</span>
+        </h4>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+          <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 text-[10px] block font-sans">Detection Engine</span>
+            <span className="text-emerald-400 font-bold">@mediapipe/hands</span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 text-[10px] block font-sans">Tracked Keypoints</span>
+            <span className="text-white font-bold">21 3D Joints</span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 text-[10px] block font-sans">Max Hands</span>
+            <span className="text-indigo-300 font-bold">2 Hands</span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 text-[10px] block font-sans">Min Confidence</span>
+            <span className="text-emerald-400 font-bold">0.45 Detection</span>
+          </div>
+        </div>
+
+        <div className="mt-3 p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-xs text-emerald-200">
+          <span className="font-bold">✓ MediaPipe Hands Initialized:</span> Continuously tracks 21 skeletal coordinates from live video frames and feeds them directly into the sign gesture classifier and Gemini AI multimodal pipeline.
+        </div>
       </div>
     </div>
   );

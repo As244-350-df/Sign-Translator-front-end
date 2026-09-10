@@ -12,7 +12,8 @@ import {
   Target,
   HandMetal,
   Keyboard,
-  HelpCircle
+  HelpCircle,
+  Sparkles
 } from "lucide-react";
 import { RecordingControls } from "../RecordingControls";
 
@@ -27,6 +28,10 @@ export const CameraToolbar = ({
   onToggleMesh,
   autoSpeakOnCommit,
   onToggleAutoSpeak,
+  geminiTranslationEnabled = true,
+  onToggleGeminiTranslation,
+  onCaptureGeminiVision,
+  isGeminiVisionLoading = false,
   isRecording,
   onToggleRecording,
   recorder,
@@ -123,6 +128,33 @@ export const CameraToolbar = ({
           {autoSpeakOnCommit ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           <span>Auto TTS {autoSpeakOnCommit ? "ON" : "OFF"}</span>
         </button>
+
+        {/* Gemini AI Real-time Stream Recognition */}
+        <button
+          onClick={onToggleGeminiTranslation}
+          className={`p-2 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer ${
+            geminiTranslationEnabled
+              ? "bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-400/40"
+              : "bg-slate-100 dark:bg-slate-700 text-slate-500"
+          }`}
+          title="Toggle Gemini 3.8 Flash real-time streaming sign translation"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+          <span>Gemini AI {geminiTranslationEnabled ? "ON" : "OFF"}</span>
+        </button>
+
+        {/* Snap with Gemini Vision */}
+        {onCaptureGeminiVision && (
+          <button
+            onClick={() => onCaptureGeminiVision()}
+            disabled={isGeminiVisionLoading}
+            className="px-2.5 py-2 rounded-xl text-xs font-bold bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/50 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border border-purple-400/30 flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-50"
+            title="Snap current video frame with 21 MediaPipe coordinates and analyze with Gemini 3.8 Flash Vision"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isGeminiVisionLoading ? "animate-spin" : ""}`} />
+            <span>{isGeminiVisionLoading ? "Analyzing..." : "Gemini Snap"}</span>
+          </button>
+        )}
 
         {/* Record Translation Video Button */}
         <RecordingControls

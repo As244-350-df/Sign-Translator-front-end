@@ -54,8 +54,14 @@ export const CameraFeedStage = ({
 
       {isCameraActive ? (
         <>
-          {tracking.inputSourceMode !== "simulator" ? (
-            <>
+          <div
+            className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
+            style={{
+              transform: `scale(${Number(tracking.cameraZoom) || 1}) translate(${(Number(tracking.cameraPan?.x) || 0) * 12}%, ${(Number(tracking.cameraPan?.y) || 0) * 12}%)`,
+              transformOrigin: "center center"
+            }}
+          >
+            {tracking.inputSourceMode !== "simulator" && (
               <video
                 ref={tracking.videoRef}
                 autoPlay
@@ -63,19 +69,31 @@ export const CameraFeedStage = ({
                 playsInline
                 loop={tracking.inputSourceMode === "video_upload"}
                 style={{
-                  transform:
-                    tracking.inputSourceMode === "webcam"
-                      ? `scaleX(-${Number(tracking.cameraZoom) || 1}) scaleY(${Number(tracking.cameraZoom) || 1}) translate(${(Number(tracking.cameraPan?.x) || 0) * 12}%, ${(Number(tracking.cameraPan?.y) || 0) * 12}%)`
-                      : `scale(${Number(tracking.cameraZoom) || 1}) translate(${(Number(tracking.cameraPan?.x) || 0) * 12}%, ${(Number(tracking.cameraPan?.y) || 0) * 12}%)`,
+                  transform: tracking.inputSourceMode === "webcam" ? "scaleX(-1)" : "none",
                   transformOrigin: "center center"
                 }}
-                className={`absolute inset-0 w-full h-full object-cover transition-all duration-300 ease-out ${
+                className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ease-out ${
                   tracking.inputSourceMode === "webcam" && tracking.cameraStreamStatus !== "active"
                     ? "opacity-20 filter blur-xs"
                     : "opacity-100"
                 }`}
               />
+            )}
 
+            {/* Real-Time MediaPipe Hand Landmarks Tracking Canvas Overlay */}
+            <canvas
+              id="mediapipe-hand-landmarks-canvas"
+              data-testid="mediapipe-hand-landmarks-canvas"
+              aria-label="MediaPipe Hand Landmarks Tracking Canvas"
+              ref={tracking.canvasRef}
+              width={1280}
+              height={720}
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
+            />
+          </div>
+
+          {tracking.inputSourceMode !== "simulator" ? (
+            <>
               {tracking.inputSourceMode === "video_upload" && !tracking.uploadedVideoUrl && (
                 <div className="absolute inset-0 z-20 bg-slate-950/80 flex flex-col items-center justify-center p-6 text-center">
                   <Film className="w-12 h-12 text-indigo-400 mb-3 animate-pulse" />
@@ -103,18 +121,18 @@ export const CameraFeedStage = ({
               />
             </>
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-6 text-center">
+            <div className="absolute inset-0 bg-gradient-to-tr from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center p-6 text-center pointer-events-none">
               <div className="w-44 h-44 rounded-full bg-indigo-500/10 animate-ping absolute pointer-events-none" />
               <div className="text-center z-0 opacity-80 mb-3">
                 <HandMetal className="w-14 h-14 text-indigo-400 mx-auto mb-2" />
                 <p className="text-xs font-mono font-bold text-indigo-300">
-                  TensorFlow Neural Kinematics Simulation Mode
+                  Gemini AI Stream Kinematics Simulation Mode
                 </p>
                 <p className="text-[11px] text-slate-400 max-w-xs mt-1">
-                  Generating 21 3D spatial hand landmarks with anatomical physics.
+                  Interactive 21 3D spatial hand landmarks with anatomical physics.
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-2 z-10">
+              <div className="flex flex-wrap items-center justify-center gap-2 z-20 pointer-events-auto">
                 <button
                   onClick={() => tracking.handleSelectInputMode("webcam")}
                   className="px-3.5 py-2 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/50 text-indigo-200 text-xs font-bold flex items-center space-x-2 transition-all cursor-pointer shadow-md"
@@ -132,13 +150,6 @@ export const CameraFeedStage = ({
               </div>
             </div>
           )}
-
-          <canvas
-            ref={tracking.canvasRef}
-            width={1280}
-            height={720}
-            className="absolute inset-0 w-full h-full pointer-events-none z-10"
-          />
 
           <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent opacity-40 animate-scan pointer-events-none" />
 
@@ -169,6 +180,12 @@ export const CameraFeedStage = ({
             hardwarePermissionStatus={tracking.hardwarePermissionStatus}
             onShowDiagnostics={onOpenDiagnostics}
             onCommitSign={onCommitSign}
+            isGeminiStreaming={tracking.isGeminiStreaming}
+            geminiStreamTokens={tracking.geminiStreamTokens}
+            geminiVisionResult={tracking.geminiVisionResult}
+            isGeminiVisionLoading={tracking.isGeminiVisionLoading}
+            onCaptureGeminiVision={tracking.captureGeminiVision}
+            onClearGeminiVision={() => tracking.setGeminiVisionResult(null)}
           />
           <div className="absolute top-4 right-4 z-20 pointer-events-auto">
             <RecordingDurationPill recorder={recorder} isRecording={isRecording} />

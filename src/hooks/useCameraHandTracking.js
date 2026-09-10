@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { RealtimeHandTracker } from "../utils/handTracker";
 import { syntheticVideoEngine } from "../utils/demoVideoFeeds";
 import { speakText } from "../utils/speech";
+import { aiStreamRecognizer } from "../utils/aiStreamRecognizer";
+import { geminiService } from "../services/geminiService";
 
 export const useCameraHandTracking = ({
   settings,
@@ -32,6 +34,14 @@ export const useCameraHandTracking = ({
   const [calibrationScale, setCalibrationScale] = useState(1);
   const [isAutoCentering, setIsAutoCentering] = useState(settings.autoCenterCamera ?? false);
 
+  // Gemini AI Real-time Hand Sign Translation States
+  const [geminiTranslationEnabled, setGeminiTranslationEnabled] = useState(true);
+  const [geminiStreamTokens, setGeminiStreamTokens] = useState("");
+  const [isGeminiStreaming, setIsGeminiStreaming] = useState(false);
+  const [geminiVisionResult, setGeminiVisionResult] = useState(null);
+  const [isGeminiVisionLoading, setIsGeminiVisionLoading] = useState(false);
+  const [lastGeminiTranslation, setLastGeminiTranslation] = useState(null);
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handTrackerRef = useRef(new RealtimeHandTracker());
@@ -51,6 +61,8 @@ export const useCameraHandTracking = ({
   inputSourceModeRef.current = inputSourceMode;
   const cameraStreamStatusRef = useRef(cameraStreamStatus);
   cameraStreamStatusRef.current = cameraStreamStatus;
+  const geminiTranslationEnabledRef = useRef(geminiTranslationEnabled);
+  geminiTranslationEnabledRef.current = geminiTranslationEnabled;
 
   useEffect(() => {
     if (typeof settings.autoCenterCamera === "boolean") {
@@ -337,13 +349,14 @@ export const useCameraHandTracking = ({
     const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
     const tracker = handTrackerRef.current;
+    const isWebcam = inputSourceMode === "webcam";
     if (videoRef.current && (inputSourceMode === "webcam" || inputSourceMode === "video_upload" || inputSourceMode === "demo_clips")) {
-      tracker.setElements(videoRef.current, canvas);
+      tracker.setElements(videoRef.current, canvas, isWebcam);
     } else {
-      tracker.setElements(null, canvas);
+      tracker.setElements(null, canvas, false);
     }
     let lastDetectionTime = 0;
-    const DETECTION_INTERVAL_MS = 50;
+    const DETECTION_INTERVAL_MS = 33; // ~30 FPS detection for responsive real-time recognition
 
     const render = (time) => {
       if (document.hidden) {
@@ -353,11 +366,22 @@ export const useCameraHandTracking = ({
       try {
         const currentMode = inputSourceModeRef.current;
         const currentStatus = cameraStreamStatusRef.current;
+        tracker.setMirrored(currentMode === "webcam");
+
         if (currentMode === "webcam" && currentStatus !== "active") {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           animationFrameId.current = requestAnimationFrame(render);
           return;
         }
+
+        // Dynamically match canvas internal coordinate resolution to video resolution
+        if (videoRef.current && videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
+          if (canvas.width !== videoRef.current.videoWidth || canvas.height !== videoRef.current.videoHeight) {
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+          }
+        }
+
         const now = performance.now();
         const shouldRunDetection = now - lastDetectionTime >= DETECTION_INTERVAL_MS;
         if (shouldRunDetection) {
@@ -369,6 +393,30 @@ export const useCameraHandTracking = ({
           onRecognizedSign(detection);
           if (autoSpeakOnCommitRef.current) {
             speakText(detection.signMeaning.translatedText, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
+          }
+
+          if (geminiTranslationEnabledRef.current) {
+            setIsGeminiStreaming(true);
+            setGeminiStreamTokens("");
+
+            // Communicate with Gemini API using hand landmark data as context
+            geminiService.translateLandmarks({
+              landmarks: detection.landmarks,
+              allHands: detection.allHands,
+              fingerFlexions: detection.fingerPose,
+              orientation: detection.wristRotation ? { rotation: detection.wristRotation } : null,
+              handedness: detection.handedness || "Right",
+              candidateSign: detection.signMeaning?.signName || detection.signKey || "HELLO",
+              signLanguage: settingsRef.current.primarySignLanguage || "ASL"
+            }).then((res) => {
+              setIsGeminiStreaming(false);
+              setLastGeminiTranslation(res);
+              if (res?.label) {
+                setGeminiStreamTokens(`${res.label}: "${res.englishTranslation || ""}"`);
+              }
+            }).catch(() => {
+              setIsGeminiStreaming(false);
+            });
           }
         }
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -395,6 +443,113 @@ export const useCameraHandTracking = ({
       }
     };
   }, [isCameraActive, translationMode, inputSourceMode, onRecognizedSign]);
+
+  const captureGeminiVision = useCallback(async (candidateGloss) => {
+    setIsGeminiVisionLoading(true);
+    try {
+      const offscreen = document.createElement("canvas");
+      const video = videoRef.current;
+      const mainCanvas = canvasRef.current;
+      let width = 640;
+      let height = 480;
+
+      if (video && video.videoWidth > 0) {
+        width = video.videoWidth;
+        height = video.videoHeight;
+        offscreen.width = width;
+        offscreen.height = height;
+        const ctx = offscreen.getContext("2d");
+        if (inputSourceModeRef.current === "webcam") {
+          ctx.translate(width, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, width, height);
+      } else if (mainCanvas) {
+        width = mainCanvas.width;
+        height = mainCanvas.height;
+        offscreen.width = width;
+        offscreen.height = height;
+        const ctx = offscreen.getContext("2d");
+        ctx.drawImage(mainCanvas, 0, 0);
+      }
+
+      const dataUrl = offscreen.toDataURL("image/jpeg", 0.85);
+      const tracker = handTrackerRef.current;
+      const landmarks = tracker?.smoothedLandmarks || [];
+      const gloss = candidateGloss || tracker?.currentSignKey || "HELLO";
+
+      // Call Gemini Service integrating hand landmark context and snapshot image
+      const res = await geminiService.translateLandmarks({
+        image: dataUrl,
+        landmarks,
+        allHands: tracker?.allHands || [],
+        fingerFlexions: tracker?.fingerPose || null,
+        handedness: tracker?.handedness || "Right",
+        candidateSign: gloss,
+        signLanguage: settingsRef.current?.primarySignLanguage || "ASL"
+      });
+
+      setGeminiVisionResult(res);
+      setLastGeminiTranslation(res);
+      return res;
+    } catch (err) {
+      console.warn("captureGeminiVision error:", err);
+      return null;
+    } finally {
+      setIsGeminiVisionLoading(false);
+    }
+  }, []);
+
+  const translateCurrentLandmarksWithGemini = useCallback(async (customCandidate) => {
+    setIsGeminiVisionLoading(true);
+    try {
+      const tracker = handTrackerRef.current;
+      const landmarks = tracker?.smoothedLandmarks || [];
+      const gloss = customCandidate || tracker?.currentSignKey || "HELLO";
+
+      const res = await geminiService.translateLandmarks({
+        landmarks,
+        allHands: tracker?.allHands || [],
+        fingerFlexions: tracker?.fingerPose || null,
+        handedness: tracker?.handedness || "Right",
+        candidateSign: gloss,
+        signLanguage: settingsRef.current?.primarySignLanguage || "ASL"
+      });
+
+      setGeminiVisionResult(res);
+      setLastGeminiTranslation(res);
+      return res;
+    } catch (err) {
+      console.warn("translateCurrentLandmarksWithGemini error:", err);
+      return null;
+    } finally {
+      setIsGeminiVisionLoading(false);
+    }
+  }, []);
+
+  const translateSentenceWithGemini = useCallback(async (signsList, onToken) => {
+    if (!signsList || signsList.length === 0) return null;
+    setIsGeminiStreaming(true);
+    setGeminiStreamTokens("");
+    try {
+      const glosses = signsList.map((s) => (typeof s === "string" ? s : s.text || s.signName || ""));
+      const result = await aiStreamRecognizer.streamTranslate(
+        glosses,
+        settingsRef.current?.primarySignLanguage || "ASL",
+        (token, full) => {
+          setGeminiStreamTokens(full);
+          if (onToken) onToken(token, full);
+        }
+      );
+      setLastGeminiTranslation(result);
+      return result;
+    } catch (err) {
+      console.warn("translateSentenceWithGemini error:", err);
+      return null;
+    } finally {
+      setIsGeminiStreaming(false);
+    }
+  }, []);
 
   return {
     inputSourceMode,
@@ -429,6 +584,20 @@ export const useCameraHandTracking = ({
     setCalibrationScale,
     isAutoCentering,
     setIsAutoCentering,
+    // Gemini AI Real-time Translation states & controls
+    geminiTranslationEnabled,
+    setGeminiTranslationEnabled,
+    geminiStreamTokens,
+    setGeminiStreamTokens,
+    isGeminiStreaming,
+    geminiVisionResult,
+    setGeminiVisionResult,
+    isGeminiVisionLoading,
+    lastGeminiTranslation,
+    captureGeminiVision,
+    translateCurrentLandmarksWithGemini,
+    geminiService,
+    translateSentenceWithGemini,
     videoRef,
     canvasRef,
     handTrackerRef,

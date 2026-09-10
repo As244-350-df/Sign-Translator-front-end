@@ -1,4 +1,4 @@
-import { tfjsClassifier } from "./tfjsModel";
+import { aiStreamRecognizer } from "./aiStreamRecognizer";
 import { mediaPipeTracker } from "./mediaPipeTracker";
 const PHYSICS_PRESETS = {
   biological: {
@@ -700,9 +700,17 @@ class RealtimeHandTracker {
     naturalFrequencyHz: 12.5,
     mode: "Biological"
   };
-  useTensorFlowClassifier = true;
-  lastTfTelemetry = null;
-  lastTfTelemetryTime = 0;
+  useAIStream = true;
+  lastStreamTelemetry = null;
+  lastStreamTelemetryTime = 0;
+
+  // Web Worker Offloading Engine
+  worker = null;
+  isWorkerBusy = false;
+  latestWorkerDetection = null;
+  frameSeq = 0;
+  workerReady = false;
+
   constructor() {
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCanvas.width = 160;
@@ -711,9 +719,37 @@ class RealtimeHandTracker {
     this.customSigns = loadSavedCustomSigns();
     this.syncDictionary();
     this.initPhysicsNodes();
-    tfjsClassifier.initialize().catch((err) => {
-      console.warn("[RealtimeHandTracker] TF.js engine background init:", err);
+    mediaPipeTracker.initialize().then((ready) => {
+      if (ready) {
+        console.log("[RealtimeHandTracker] MediaPipe ML initialized and ready");
+      }
+    }).catch((err) => {
+      console.warn("[RealtimeHandTracker] MediaPipe init error:", err);
     });
+    aiStreamRecognizer.initialize().catch((err) => {
+      console.warn("[RealtimeHandTracker] AI Stream engine background init:", err);
+    });
+  }
+
+  initWorker() {
+    // MediaPipe processes on main thread with GPU acceleration for zero-latency tracking
+  }
+
+  postWorkerConfig() {
+    if (!this.worker) return;
+    try {
+      this.worker.postMessage({
+        type: "UPDATE_CONFIG",
+        zoomLevel: this.zoomLevel,
+        panOffsetX: this.panOffsetX,
+        panOffsetY: this.panOffsetY,
+        calibrationScale: this.calibrationScale,
+        autoCenterEnabled: this.autoCenterEnabled,
+        physicsConfig: this.physicsConfig,
+        fingerPose: this.fingerPose,
+        customSigns: this.customSigns
+      });
+    } catch {}
   }
   initPhysicsNodes() {
     const masses = [
@@ -783,6 +819,7 @@ class RealtimeHandTracker {
         preset: config.preset
       };
     }
+    this.postWorkerConfig();
   }
   getPhysicsConfig() {
     return { ...this.physicsConfig };
@@ -794,9 +831,21 @@ class RealtimeHandTracker {
         ...PHYSICS_PRESETS[preset],
         preset
       };
+      this.postWorkerConfig();
     }
   }
   applyPhysicsImpulse(target = "all", impulseX = 0, impulseY = -15, impulseZ = 5) {
+    if (this.worker) {
+      try {
+        this.worker.postMessage({
+          type: "APPLY_IMPULSE",
+          target,
+          impulseX,
+          impulseY,
+          impulseZ
+        });
+      } catch {}
+    }
     const targetIndices = [];
     if (target === "all") {
       for (let i = 0; i < 21; i++) targetIndices.push(i);
@@ -821,26 +870,27 @@ class RealtimeHandTracker {
   getPhysicsTelemetry() {
     return { ...this.physicsTelemetry };
   }
-  // TensorFlow.js Neural Classifier Controls & Telemetry
-  getTensorFlowTelemetry() {
-    return tfjsClassifier.getTelemetry();
+  // Gemini AI Stream Recognition Controls & Telemetry
+  getAIStreamTelemetry() {
+    return aiStreamRecognizer.getTelemetry();
   }
-  setUseTensorFlowClassifier(enabled) {
-    this.useTensorFlowClassifier = enabled;
+  setUseAIStream(enabled) {
+    this.useAIStream = enabled;
   }
-  isTensorFlowClassifierEnabled() {
-    return this.useTensorFlowClassifier;
+  isAIStreamEnabled() {
+    return this.useAIStream;
   }
-  async setTensorFlowBackend(backend) {
-    return tfjsClassifier.setBackend(backend);
+  async setAIStreamBackend(backend) {
+    return aiStreamRecognizer.setBackend(backend);
   }
   async trainCurrentPoseAsSample(label) {
-    return tfjsClassifier.trainSample(label, this.smoothedLandmarks, this.smoothedPose);
+    return aiStreamRecognizer.trainSample(label, this.smoothedLandmarks, this.smoothedPose);
   }
   setZoom(zoom, panX = 0, panY = 0) {
     this.zoomLevel = Math.max(1, Math.min(3.5, Number(zoom) || 1));
     this.panOffsetX = Math.max(-1, Math.min(1, Number(panX) || 0));
     this.panOffsetY = Math.max(-1, Math.min(1, Number(panY) || 0));
+    this.postWorkerConfig();
   }
   getZoom() {
     return {
@@ -852,16 +902,22 @@ class RealtimeHandTracker {
   }
   setCalibrationScale(scale) {
     this.calibrationScale = Math.max(0.7, Math.min(1.5, Number(scale) || 1));
+    this.postWorkerConfig();
   }
   setAutoCenter(enabled) {
     this.autoCenterEnabled = Boolean(enabled);
+    this.postWorkerConfig();
   }
   isAutoCenterEnabled() {
     return this.autoCenterEnabled;
   }
-  setElements(video, canvas) {
+  setMirrored(mirrored) {
+    this.isMirrored = !!mirrored;
+  }
+  setElements(video, canvas, isMirrored = true) {
     this.videoElement = video;
     this.canvasElement = canvas;
+    this.isMirrored = isMirrored;
     mediaPipeTracker.initialize().catch((err) => {
       console.warn("[HandTracker] MediaPipe background init note:", err);
     });
@@ -880,6 +936,15 @@ class RealtimeHandTracker {
     };
     saveCustomSignsToStorage(this.customSigns);
     this.syncDictionary();
+    if (this.worker) {
+      try {
+        this.worker.postMessage({
+          type: "REGISTER_SIGN",
+          key: cleanKey,
+          sign: this.customSigns[cleanKey]
+        });
+      } catch {}
+    }
     this.forceSign(cleanKey);
     return cleanKey;
   }
@@ -888,6 +953,14 @@ class RealtimeHandTracker {
       delete this.customSigns[key];
       saveCustomSignsToStorage(this.customSigns);
       this.syncDictionary();
+      if (this.worker) {
+        try {
+          this.worker.postMessage({
+            type: "DELETE_SIGN",
+            key
+          });
+        } catch {}
+      }
       if (this.currentSignKey === key) {
         this.currentSignKey = "HELLO";
       }
@@ -909,9 +982,11 @@ class RealtimeHandTracker {
       ...newPose,
       isFreeMotion: true
     };
+    this.postWorkerConfig();
   }
   enableFreeMotionMode(enable) {
     this.fingerPose.isFreeMotion = enable;
+    this.postWorkerConfig();
   }
   getFingerPose() {
     return { ...this.smoothedPose };
@@ -921,6 +996,7 @@ class RealtimeHandTracker {
     if (anim !== "none") {
       this.fingerPose.isFreeMotion = true;
     }
+    this.postWorkerConfig();
   }
   // Process live camera frame with optical computer vision & skin chrominance
   processFrame(timestamp = performance.now(), forceDetection = false) {
@@ -930,6 +1006,9 @@ class RealtimeHandTracker {
       this.fps = Math.round(1e3 / delta);
     }
     this.lastFrameTime = now;
+    const width = this.canvasElement ? this.canvasElement.width : 1280;
+    const height = this.canvasElement ? this.canvasElement.height : 720;
+
     let targetX = 0;
     let targetY = 0;
     let hasRealHand = false;
@@ -938,14 +1017,24 @@ class RealtimeHandTracker {
     let detectedSpread = 0.45;
     let detectedTilt = 0;
     let realMediaPipeLandmarks = [];
-    const width = this.canvasElement ? this.canvasElement.width : 1280;
-    const height = this.canvasElement ? this.canvasElement.height : 720;
+    let mpRecognizedSignKey = null;
+    let mpConfidence = 0.95;
+    let mpAllHands = [];
+    let mpHandedness = "Right";
+
     if (this.videoElement && this.videoElement.readyState >= 2) {
       try {
-        const mpResult = mediaPipeTracker.processVideoFrame(this.videoElement, width, height, timestamp, forceDetection);
-        if (mpResult && mpResult.hasHand && mpResult.landmarks.length >= 21) {
+        const isMirrored = this.isMirrored !== false;
+        const mpResult = mediaPipeTracker.processVideoFrame(this.videoElement, width, height, timestamp, forceDetection, isMirrored);
+        if (mpResult && mpResult.hasHand && mpResult.landmarks && mpResult.landmarks.length >= 21) {
           hasRealHand = true;
           realMediaPipeLandmarks = mpResult.landmarks;
+          mpRecognizedSignKey = mpResult.recognizedSignKey || null;
+          mpAllHands = mpResult.allHands || [];
+          mpHandedness = mpResult.handedness || "Right";
+          if (mpResult.confidence) {
+            mpConfidence = mpResult.confidence;
+          }
           this.lastHandSeenTime = performance.now();
           const middleMcp = mpResult.landmarks[9];
           const wrist = mpResult.landmarks[0];
@@ -974,6 +1063,7 @@ class RealtimeHandTracker {
           }
         }
       } catch (e) {
+        console.warn("[RealtimeHandTracker] MediaPipe frame error:", e);
       }
     }
     if (!hasRealHand && this.autoCenterEnabled) {
@@ -1078,6 +1168,9 @@ class RealtimeHandTracker {
       proceduralAnimation: this.fingerPose.proceduralAnimation
     };
     let detectedSignKey = this.detectSignFromPose(this.smoothedPose, hasRealHand ? realMediaPipeLandmarks : void 0);
+    if (hasRealHand && mpRecognizedSignKey && SIGN_DICTIONARY[mpRecognizedSignKey]) {
+      detectedSignKey = mpRecognizedSignKey;
+    }
     if (detectedSignKey !== this.currentSignKey) {
       this.currentSignKey = detectedSignKey;
       this.signHoldStartTime = now;
@@ -1124,11 +1217,19 @@ class RealtimeHandTracker {
     const signMeaning = SIGN_DICTIONARY[this.currentSignKey] || SIGN_DICTIONARY["HELLO"];
     let bMinX = Infinity, bMaxX = -Infinity, bMinY = Infinity, bMaxY = -Infinity;
     this.smoothedLandmarks.forEach((pt) => {
-      if (pt.x < bMinX) bMinX = pt.x;
-      if (pt.x > bMaxX) bMaxX = pt.x;
-      if (pt.y < bMinY) bMinY = pt.y;
-      if (pt.y > bMaxY) bMaxY = pt.y;
+      if (pt && Number.isFinite(pt.x)) {
+        if (pt.x < bMinX) bMinX = pt.x;
+        if (pt.x > bMaxX) bMaxX = pt.x;
+        if (pt.y < bMinY) bMinY = pt.y;
+        if (pt.y > bMaxY) bMaxY = pt.y;
+      }
     });
+    if (!Number.isFinite(bMinX)) {
+      bMinX = width / 2 - 80;
+      bMaxX = width / 2 + 80;
+      bMinY = height / 2 - 80;
+      bMaxY = height / 2 + 80;
+    }
     const pad = 28;
     const distFromCenter = Math.hypot(this.panOffsetX, this.panOffsetY);
     const handFramedScore = hasRealHand ? Math.max(0, Math.min(100, Math.round((1 - Math.min(1, distFromCenter * 0.85)) * 100))) : 0;
@@ -1142,6 +1243,7 @@ class RealtimeHandTracker {
         statusText = `Auto-Framing (${handFramedScore}%)`;
       }
     }
+    this.isRealHandDetected = hasRealHand;
     return {
       landmarks: this.smoothedLandmarks,
       boundingBox: {
@@ -1152,8 +1254,9 @@ class RealtimeHandTracker {
       },
       gesture: `${signMeaning.symbol} ${signMeaning.signName}`,
       signMeaning,
-      confidence: signMeaning.confidence,
-      handedness: "Right",
+      confidence: hasRealHand && mpConfidence ? mpConfidence : (signMeaning.confidence || 0.95),
+      handedness: mpHandedness || "Right",
+      allHands: mpAllHands || [],
       fps: Math.min(60, Math.max(24, this.fps)),
       isRealHandDetected: hasRealHand,
       holdProgress,
@@ -1169,13 +1272,21 @@ class RealtimeHandTracker {
         statusText
       },
       physicsTelemetry: { ...this.physicsTelemetry },
+      aiStreamTelemetry: (() => {
+        const now = performance.now();
+        if (!this.lastStreamTelemetry || now - this.lastStreamTelemetryTime > 800) {
+          this.lastStreamTelemetry = aiStreamRecognizer.getTelemetry();
+          this.lastStreamTelemetryTime = now;
+        }
+        return this.lastStreamTelemetry;
+      })(),
       tfTelemetry: (() => {
         const now = performance.now();
-        if (!this.lastTfTelemetry || now - this.lastTfTelemetryTime > 1000) {
-          this.lastTfTelemetry = tfjsClassifier.getTelemetry();
-          this.lastTfTelemetryTime = now;
+        if (!this.lastStreamTelemetry || now - this.lastStreamTelemetryTime > 800) {
+          this.lastStreamTelemetry = aiStreamRecognizer.getTelemetry();
+          this.lastStreamTelemetryTime = now;
         }
-        return this.lastTfTelemetry;
+        return this.lastStreamTelemetry;
       })()
     };
   }
@@ -1238,14 +1349,20 @@ class RealtimeHandTracker {
       const node = this.jointNodes[i];
       const target = targets[i];
       if (!node || !target) continue;
-      if (oneEuroFilter) {
-        node.targetX = this.filter1Euro(node.filterX, target.x, now, hasRealHand ? 1.4 : 1, 0.02);
-        node.targetY = this.filter1Euro(node.filterY, target.y, now, hasRealHand ? 1.4 : 1, 0.02);
-        node.targetZ = this.filter1Euro(node.filterZ, target.z || 0, now, 1, 0.01);
-      } else {
-        node.targetX = target.x;
-        node.targetY = target.y;
-        node.targetZ = target.z || 0;
+      if (hasRealHand) {
+        const smoothX = oneEuroFilter ? this.filter1Euro(node.filterX, target.x, now, 1.8, 0.015) : target.x;
+        const smoothY = oneEuroFilter ? this.filter1Euro(node.filterY, target.y, now, 1.8, 0.015) : target.y;
+        const smoothZ = oneEuroFilter ? this.filter1Euro(node.filterZ, target.z || 0, now, 1.5, 0.01) : (target.z || 0);
+        node.x = smoothX;
+        node.y = smoothY;
+        node.z = smoothZ;
+        node.targetX = smoothX;
+        node.targetY = smoothY;
+        node.targetZ = smoothZ;
+        node.vx = 0;
+        node.vy = 0;
+        node.vz = 0;
+        continue;
       }
     }
     const contactForces = Array.from({ length: 21 }, () => ({ fx: 0, fy: 0, fz: 0 }));
@@ -1364,26 +1481,57 @@ class RealtimeHandTracker {
     const keys = Object.keys(SIGN_DICTIONARY);
     if (keys.length === 0) return "HELLO";
     if (rawLandmarks && rawLandmarks.length >= 21) {
-      const distThumbIndex = Math.hypot(rawLandmarks[4].x - rawLandmarks[8].x, rawLandmarks[4].y - rawLandmarks[8].y);
-      const distThumbMiddle = Math.hypot(rawLandmarks[4].x - rawLandmarks[12].x, rawLandmarks[4].y - rawLandmarks[12].y);
-      const distThumbRing = Math.hypot(rawLandmarks[4].x - rawLandmarks[16].x, rawLandmarks[4].y - rawLandmarks[16].y);
-      const distThumbPinky = Math.hypot(rawLandmarks[4].x - rawLandmarks[20].x, rawLandmarks[4].y - rawLandmarks[20].y);
-      if (distThumbPinky < 35 && pose.index > 0.65 && pose.middle > 0.65 && pose.ring > 0.65 && SIGN_DICTIONARY["6"]) {
-        return "6";
-      }
-      if (distThumbRing < 35 && pose.index > 0.65 && pose.middle > 0.65 && pose.pinky > 0.65 && SIGN_DICTIONARY["7"]) {
-        return "7";
-      }
-      if (distThumbMiddle < 35 && pose.index > 0.65 && pose.ring > 0.65 && pose.pinky > 0.65 && SIGN_DICTIONARY["8"]) {
-        return "8";
-      }
-      if (distThumbIndex < 35 && pose.middle > 0.65 && pose.ring > 0.6 && pose.pinky > 0.6) {
-        if (SIGN_DICTIONARY["F"]) return "F";
-        if (SIGN_DICTIONARY["9"]) return "9";
+      const wrist = rawLandmarks[0];
+      const middleMcp = rawLandmarks[9];
+      const handScale = Math.hypot(middleMcp.x - wrist.x, middleMcp.y - wrist.y) || 120;
+      const distThumbIndex = Math.hypot(rawLandmarks[4].x - rawLandmarks[8].x, rawLandmarks[4].y - rawLandmarks[8].y) / handScale;
+
+      // OKAY / F
+      if (distThumbIndex < 0.35 && pose.middle > 0.55 && pose.ring > 0.55 && pose.pinky > 0.45) {
         if (SIGN_DICTIONARY["OKAY"]) return "OKAY";
+        if (SIGN_DICTIONARY["F"]) return "F";
       }
-      if (pose.thumb > 0.75 && pose.index > 0.75 && pose.middle < 0.25 && pose.ring < 0.25 && pose.pinky < 0.25 && distThumbIndex > 65) {
+      // I LOVE YOU
+      if (pose.thumb > 0.55 && pose.index > 0.6 && pose.middle < 0.35 && pose.ring < 0.35 && pose.pinky > 0.6) {
+        if (SIGN_DICTIONARY["I_LOVE_YOU"]) return "I_LOVE_YOU";
+      }
+      // CALL ME / Y
+      if (pose.thumb > 0.55 && pose.index < 0.35 && pose.middle < 0.35 && pose.ring < 0.35 && pose.pinky > 0.6) {
+        if (SIGN_DICTIONARY["CALL_ME"]) return "CALL_ME";
+        if (SIGN_DICTIONARY["Y"]) return "Y";
+      }
+      // PEACE / V
+      if (pose.index > 0.6 && pose.middle > 0.6 && pose.ring < 0.35 && pose.pinky < 0.35 && pose.thumb < 0.55) {
+        if (SIGN_DICTIONARY["PEACE"]) return "PEACE";
+        if (SIGN_DICTIONARY["V"]) return "V";
+      }
+      // L
+      if (pose.thumb > 0.6 && pose.index > 0.6 && pose.middle < 0.35 && pose.ring < 0.35 && pose.pinky < 0.35 && distThumbIndex > 0.65) {
         if (SIGN_DICTIONARY["L"]) return "L";
+      }
+      // WATER / W
+      if (pose.index > 0.6 && pose.middle > 0.6 && pose.ring > 0.6 && pose.pinky < 0.35 && pose.thumb < 0.55) {
+        if (SIGN_DICTIONARY["WATER"]) return "WATER";
+        if (SIGN_DICTIONARY["W"]) return "W";
+      }
+      // POINT / 1
+      if (pose.index > 0.65 && pose.middle < 0.35 && pose.ring < 0.35 && pose.pinky < 0.35) {
+        if (SIGN_DICTIONARY["1"]) return "1";
+        if (SIGN_DICTIONARY["D"]) return "D";
+      }
+      // THUMBS UP / GOOD
+      if (pose.thumb > 0.6 && pose.index < 0.35 && pose.middle < 0.35 && pose.ring < 0.35 && pose.pinky < 0.35 && rawLandmarks[4].y < rawLandmarks[0].y) {
+        if (SIGN_DICTIONARY["GOOD"]) return "GOOD";
+        if (SIGN_DICTIONARY["YES"]) return "YES";
+      }
+      // HELLO (Open Hand)
+      if (pose.thumb > 0.55 && pose.index > 0.6 && pose.middle > 0.6 && pose.ring > 0.55 && pose.pinky > 0.55) {
+        return "HELLO";
+      }
+      // FIST / S
+      if (pose.index < 0.3 && pose.middle < 0.3 && pose.ring < 0.3 && pose.pinky < 0.3 && pose.thumb < 0.45) {
+        if (SIGN_DICTIONARY["S"]) return "S";
+        if (SIGN_DICTIONARY["YES"]) return "YES";
       }
     }
     let bestKey = keys[0];
@@ -1424,6 +1572,14 @@ class RealtimeHandTracker {
           isFreeMotion: false,
           proceduralAnimation: "none"
         };
+      }
+      if (this.worker) {
+        try {
+          this.worker.postMessage({
+            type: "FORCE_SIGN",
+            signKey
+          });
+        } catch {}
       }
     }
   }
@@ -1563,6 +1719,76 @@ class RealtimeHandTracker {
       // 17-20: Pinky
     ];
   }
+  drawSearchingGuide(ctx, width, height) {
+    const cx = width / 2;
+    const cy = height / 2;
+    const t = performance.now() * 0.002;
+    const pulse = Math.sin(t * 3) * 6;
+    const boxW = Math.min(width * 0.45, 280) + pulse;
+    const boxH = Math.min(height * 0.55, 340) + pulse;
+
+    ctx.save();
+    // Soft guide boundary
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.35)";
+    ctx.setLineDash([6, 6]);
+    ctx.strokeRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
+    ctx.setLineDash([]);
+
+    // Corner brackets
+    const cornerLen = 24;
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = "#38BDF8";
+    ctx.lineCap = "round";
+
+    // Top-left
+    ctx.beginPath();
+    ctx.moveTo(cx - boxW / 2, cy - boxH / 2 + cornerLen);
+    ctx.lineTo(cx - boxW / 2, cy - boxH / 2);
+    ctx.lineTo(cx - boxW / 2 + cornerLen, cy - boxH / 2);
+    ctx.stroke();
+
+    // Top-right
+    ctx.beginPath();
+    ctx.moveTo(cx + boxW / 2 - cornerLen, cy - boxH / 2);
+    ctx.lineTo(cx + boxW / 2, cy - boxH / 2);
+    ctx.lineTo(cx + boxW / 2, cy - boxH / 2 + cornerLen);
+    ctx.stroke();
+
+    // Bottom-left
+    ctx.beginPath();
+    ctx.moveTo(cx - boxW / 2, cy + boxH / 2 - cornerLen);
+    ctx.lineTo(cx - boxW / 2, cy + boxH / 2);
+    ctx.lineTo(cx - boxW / 2 + cornerLen, cy + boxH / 2);
+    ctx.stroke();
+
+    // Bottom-right
+    ctx.beginPath();
+    ctx.moveTo(cx + boxW / 2 - cornerLen, cy + boxH / 2);
+    ctx.lineTo(cx + boxW / 2, cy + boxH / 2);
+    ctx.lineTo(cx + boxW / 2, cy + boxH / 2 - cornerLen);
+    ctx.stroke();
+
+    // Center icon and prompt
+    const prompt = "🖐️ Hold hand in camera view to detect signs & track mesh";
+    ctx.font = "bold 13px system-ui, -apple-system, sans-serif";
+    const pw = ctx.measureText(prompt).width;
+    const pillY = Math.min(height - 46, cy + boxH / 2 + 16);
+
+    ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+    ctx.beginPath();
+    ctx.roundRect(cx - pw / 2 - 16, pillY, pw + 32, 32, 16);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(56, 189, 248, 0.6)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = "#F8FAFC";
+    ctx.fillText(prompt, cx - pw / 2, pillY + 20);
+
+    ctx.restore();
+  }
+
   // Draw 21-Joint Skeletal Mesh, Volumetric 3D Bones, Thenar Muscle Webbing, and Physics HUD
   draw(ctx, result, options = {}) {
     try {
@@ -1573,251 +1799,340 @@ class RealtimeHandTracker {
         showHUD = true,
         showAlignmentGuide = false
       } = options;
-      const { landmarks, boundingBox, gesture, signMeaning, confidence, fps, isRealHandDetected, holdProgress, fingerPose, physicsTelemetry } = result;
-      if (!landmarks || landmarks.length < 21) return;
-      const safePts = landmarks.map((pt, idx) => {
-        const fallbackX = 640 + (idx - 10) * 8;
-        const fallbackY = 360 + idx % 4 * 12;
-        return {
-          x: Number.isFinite(pt?.x) ? pt.x : fallbackX,
-          y: Number.isFinite(pt?.y) ? pt.y : fallbackY,
-          z: Number.isFinite(pt?.z) ? pt.z || 0 : 0
-        };
-      });
+      const { landmarks, boundingBox, gesture, signMeaning, confidence, fps, isRealHandDetected, holdProgress, fingerPose, physicsTelemetry, allHands, handedness } = result;
+
+      if (!isRealHandDetected && this.videoElement) {
+        this.drawSearchingGuide(ctx, ctx.canvas.width, ctx.canvas.height);
+        return;
+      }
+
+      // Determine hands to render (supports multi-hand tracking from MediaPipe)
+      const handsToDraw = (allHands && allHands.length > 0)
+        ? allHands
+        : (landmarks && landmarks.length >= 21)
+          ? [{ landmarks, handedness: handedness || "Right", confidence, signMeaning, fingerPose }]
+          : [];
+
+      if (handsToDraw.length === 0) return;
+
       const bones = [
         // Palm Metacarpals & Webbing
-        [0, 1],
-        [0, 5],
-        [0, 9],
-        [0, 13],
-        [0, 17],
-        [1, 5],
-        [5, 9],
-        [9, 13],
-        [13, 17],
+        [0, 1], [0, 5], [0, 9], [0, 13], [0, 17],
+        [1, 5], [5, 9], [9, 13], [13, 17],
         // Thumb
-        [1, 2],
-        [2, 3],
-        [3, 4],
+        [1, 2], [2, 3], [3, 4],
         // Index
-        [5, 6],
-        [6, 7],
-        [7, 8],
+        [5, 6], [6, 7], [7, 8],
         // Middle
-        [9, 10],
-        [10, 11],
-        [11, 12],
+        [9, 10], [10, 11], [11, 12],
         // Ring
-        [13, 14],
-        [14, 15],
-        [15, 16],
+        [13, 14], [14, 15], [15, 16],
         // Pinky
-        [17, 18],
-        [18, 19],
-        [19, 20]
+        [17, 18], [18, 19], [19, 20]
       ];
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(safePts[0].x, safePts[0].y);
-      ctx.lineTo(safePts[1].x, safePts[1].y);
-      ctx.lineTo(safePts[5].x, safePts[5].y);
-      ctx.lineTo(safePts[9].x, safePts[9].y);
-      ctx.lineTo(safePts[13].x, safePts[13].y);
-      ctx.lineTo(safePts[17].x, safePts[17].y);
-      ctx.closePath();
-      ctx.fillStyle = isRealHandDetected ? "rgba(16, 185, 129, 0.14)" : "rgba(99, 102, 241, 0.14)";
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(safePts[0].x, safePts[0].y);
-      ctx.quadraticCurveTo(
-        (safePts[0].x + safePts[1].x) / 2 - 12,
-        (safePts[0].y + safePts[1].y) / 2,
-        safePts[1].x,
-        safePts[1].y
-      );
-      ctx.lineTo(safePts[2].x, safePts[2].y);
-      ctx.quadraticCurveTo(
-        (safePts[2].x + safePts[5].x) / 2,
-        (safePts[2].y + safePts[5].y) / 2 + 8,
-        safePts[5].x,
-        safePts[5].y
-      );
-      ctx.closePath();
-      ctx.fillStyle = "rgba(56, 189, 248, 0.10)";
-      ctx.fill();
-      const strain = physicsTelemetry?.tendonTension ?? 30;
-      const tendonGlow = Math.min(1, 0.15 + strain / 100 * 0.45);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = `rgba(56, 189, 248, ${tendonGlow})`;
-      ctx.setLineDash([3, 4]);
-      [5, 9, 13, 17].forEach((kIdx) => {
+
+      const now = performance.now();
+      const pulsePhase = (now % 1200) / 1200; // 0 to 1 pulsating animation
+
+      handsToDraw.forEach((handItem, hIdx) => {
+        const hLandmarks = handItem.landmarks;
+        if (!hLandmarks || hLandmarks.length < 21) return;
+
+        const safePts = hLandmarks.map((pt, idx) => {
+          const fallbackX = 640 + (idx - 10) * 8;
+          const fallbackY = 360 + (idx % 4) * 12;
+          return {
+            x: Number.isFinite(pt?.x) ? pt.x : fallbackX,
+            y: Number.isFinite(pt?.y) ? pt.y : fallbackY,
+            z: Number.isFinite(pt?.z) ? pt.z || 0 : 0
+          };
+        });
+
+        const handLabel = handItem.handedness || (hIdx === 0 ? "Right" : "Left");
+        const handConf = handItem.confidence || confidence || 0.95;
+        const handSignMeaning = handItem.signMeaning || (hIdx === 0 ? signMeaning : null);
+        const handPose = handItem.fingerPose || (hIdx === 0 ? fingerPose : null);
+
+        // 1. Palm Metacarpal Webbing Fill
+        ctx.save();
         ctx.beginPath();
         ctx.moveTo(safePts[0].x, safePts[0].y);
-        ctx.lineTo(safePts[kIdx].x, safePts[kIdx].y);
-        ctx.stroke();
-      });
-      ctx.setLineDash([]);
-      ctx.lineWidth = 4.5;
-      ctx.strokeStyle = isRealHandDetected ? "#10B981" : color;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      for (let i = 0; i < bones.length; i++) {
-        const [from, to] = bones[i];
-        const pA = safePts[from];
-        const pB = safePts[to];
-        if (pA && pB) {
-          ctx.moveTo(pA.x, pA.y);
-          ctx.lineTo(pB.x, pB.y);
-        }
-      }
-      ctx.stroke();
-      ctx.lineWidth = 1.6;
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.beginPath();
-      for (let i = 0; i < bones.length; i++) {
-        const [from, to] = bones[i];
-        const pA = safePts[from];
-        const pB = safePts[to];
-        if (pA && pB) {
-          ctx.moveTo(pA.x, pA.y);
-          ctx.lineTo(pB.x, pB.y);
-        }
-      }
-      ctx.stroke();
-      for (let idx = 0; idx < safePts.length; idx++) {
-        const p = safePts[idx];
-        const isTip = idx === 4 || idx === 8 || idx === 12 || idx === 16 || idx === 20;
-        const isMCP = idx === 1 || idx === 5 || idx === 9 || idx === 13 || idx === 17;
-        const isWrist = idx === 0;
-        const pZ = typeof p.z === "number" && Number.isFinite(p.z) ? p.z : 0;
-        const depthFactor = Math.max(0.7, Math.min(1.45, 1 + pZ / 250));
-        let baseRadius = 5;
-        let fill = jointColor;
-        if (isTip) {
-          baseRadius = 7;
-          fill = "#F59E0B";
-        } else if (isWrist) {
-          baseRadius = 8.5;
-          fill = "#EC4899";
-        } else if (isMCP) {
-          baseRadius = 5.8;
-          fill = "#38BDF8";
-        }
-        const radius = Math.max(2, Math.min(30, baseRadius * depthFactor));
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = fill;
+        ctx.lineTo(safePts[1].x, safePts[1].y);
+        ctx.lineTo(safePts[5].x, safePts[5].y);
+        ctx.lineTo(safePts[9].x, safePts[9].y);
+        ctx.lineTo(safePts[13].x, safePts[13].y);
+        ctx.lineTo(safePts[17].x, safePts[17].y);
+        ctx.closePath();
+        ctx.fillStyle = isRealHandDetected
+          ? (handLabel === "Left" ? "rgba(6, 182, 212, 0.15)" : "rgba(16, 185, 129, 0.15)")
+          : "rgba(99, 102, 241, 0.14)";
         ctx.fill();
-        ctx.lineWidth = 1.8;
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+
+        // 2. Thenar Muscle Webbing (Thumb to Index Base)
+        ctx.beginPath();
+        ctx.moveTo(safePts[0].x, safePts[0].y);
+        ctx.quadraticCurveTo(
+          (safePts[0].x + safePts[1].x) / 2 - 12,
+          (safePts[0].y + safePts[1].y) / 2,
+          safePts[1].x,
+          safePts[1].y
+        );
+        ctx.lineTo(safePts[2].x, safePts[2].y);
+        ctx.quadraticCurveTo(
+          (safePts[2].x + safePts[5].x) / 2,
+          (safePts[2].y + safePts[5].y) / 2 + 8,
+          safePts[5].x,
+          safePts[5].y
+        );
+        ctx.closePath();
+        ctx.fillStyle = "rgba(56, 189, 248, 0.12)";
+        ctx.fill();
+
+        // 3. Tendon Strain Lines
+        const strain = physicsTelemetry?.tendonTension ?? 28;
+        const tendonGlow = Math.min(1, 0.15 + (strain / 100) * 0.45);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(56, 189, 248, ${tendonGlow})`;
+        ctx.setLineDash([3, 4]);
+        [5, 9, 13, 17].forEach((kIdx) => {
+          ctx.beginPath();
+          ctx.moveTo(safePts[0].x, safePts[0].y);
+          ctx.lineTo(safePts[kIdx].x, safePts[kIdx].y);
+          ctx.stroke();
+        });
+        ctx.setLineDash([]);
+
+        // 4. Skeletal Bones (Outer Glowing Line)
+        const primaryColor = isRealHandDetected
+          ? (handLabel === "Left" ? "#06B6D4" : "#10B981")
+          : color;
+        ctx.lineWidth = 4.5;
+        ctx.strokeStyle = primaryColor;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        for (let i = 0; i < bones.length; i++) {
+          const [from, to] = bones[i];
+          const pA = safePts[from];
+          const pB = safePts[to];
+          if (pA && pB) {
+            ctx.moveTo(pA.x, pA.y);
+            ctx.lineTo(pB.x, pB.y);
+          }
+        }
         ctx.stroke();
-      }
-      if (fingerPose && fingerPose.isFreeMotion) {
-        const tipIndices = [
-          { idx: 4, name: "THU", val: fingerPose.thumb },
-          { idx: 8, name: "IDX", val: fingerPose.index },
-          { idx: 12, name: "MID", val: fingerPose.middle },
-          { idx: 16, name: "RNG", val: fingerPose.ring },
-          { idx: 20, name: "PIN", val: fingerPose.pinky }
-        ];
-        tipIndices.forEach(({ idx, name, val }) => {
-          const pt = safePts[idx];
-          if (!pt) return;
-          const text = `${name} ${Math.round(val * 100)}%`;
-          ctx.font = "bold 10px monospace";
-          const tw = ctx.measureText(text).width;
+
+        // 5. Skeletal Bones (Inner Crisp White Core Line)
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.beginPath();
+        for (let i = 0; i < bones.length; i++) {
+          const [from, to] = bones[i];
+          const pA = safePts[from];
+          const pB = safePts[to];
+          if (pA && pB) {
+            ctx.moveTo(pA.x, pA.y);
+            ctx.lineTo(pB.x, pB.y);
+          }
+        }
+        ctx.stroke();
+
+        // 6. 21 Hand Landmarks Joint Nodes
+        for (let idx = 0; idx < safePts.length; idx++) {
+          const p = safePts[idx];
+          const isTip = idx === 4 || idx === 8 || idx === 12 || idx === 16 || idx === 20;
+          const isMCP = idx === 1 || idx === 5 || idx === 9 || idx === 13 || idx === 17;
+          const isWrist = idx === 0;
+          const pZ = typeof p.z === "number" && Number.isFinite(p.z) ? p.z : 0;
+          const depthFactor = Math.max(0.7, Math.min(1.45, 1 + pZ / 250));
+
+          let baseRadius = 5;
+          let fill = jointColor;
+
+          if (isTip) {
+            baseRadius = 7;
+            fill = "#F59E0B"; // Amber Gold for Fingertips
+
+            // Pulsing radar halo around active fingertips
+            const pulseRadius = (baseRadius + 6 + pulsePhase * 8) * depthFactor;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, pulseRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(245, 158, 11, ${(1 - pulsePhase) * 0.5})`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          } else if (isWrist) {
+            baseRadius = 8.5;
+            fill = "#EC4899"; // Magenta for Root Wrist Anchor
+
+            // Pulsing ring around wrist anchor
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, (baseRadius + 5) * depthFactor, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(236, 72, 153, 0.4)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          } else if (isMCP) {
+            baseRadius = 5.8;
+            fill = "#38BDF8"; // Sky Blue for Knuckles / MCP
+          } else {
+            fill = "#10B981"; // Emerald for Intermediate Joints
+          }
+
+          const radius = Math.max(2, Math.min(26, baseRadius * depthFactor));
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          ctx.fillStyle = fill;
+          ctx.fill();
+          ctx.lineWidth = 1.8;
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.stroke();
+        }
+
+        // 7. Fingertip Flexion Percentage Labels
+        if (handPose && handPose.isFreeMotion) {
+          const tipIndices = [
+            { idx: 4, name: "THU", val: handPose.thumb },
+            { idx: 8, name: "IDX", val: handPose.index },
+            { idx: 12, name: "MID", val: handPose.middle },
+            { idx: 16, name: "RNG", val: handPose.ring },
+            { idx: 20, name: "PIN", val: handPose.pinky }
+          ];
+          tipIndices.forEach(({ idx, name, val }) => {
+            const pt = safePts[idx];
+            if (!pt) return;
+            const text = `${name} ${Math.round(val * 100)}%`;
+            ctx.font = "bold 10px monospace";
+            const tw = ctx.measureText(text).width;
+            ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+            ctx.beginPath();
+            ctx.roundRect(pt.x - tw / 2 - 5, pt.y - 24, tw + 10, 16, 4);
+            ctx.fill();
+            ctx.strokeStyle = val > 0.5 ? "#10B981" : "#F59E0B";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillText(text, pt.x - tw / 2, pt.y - 12);
+          });
+        }
+
+        // 8. Bounding Box & Identity Pill
+        let hBbox = (hIdx === 0 && boundingBox) ? boundingBox : null;
+        if (!hBbox || !Number.isFinite(hBbox.x)) {
+          let minX = Infinity;
+          let maxX = -Infinity;
+          let minY = Infinity;
+          let maxY = -Infinity;
+          safePts.forEach((p) => {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          });
+          const bPad = 28;
+          hBbox = {
+            x: Math.max(0, minX - bPad),
+            y: Math.max(0, minY - bPad),
+            width: (maxX - minX) + bPad * 2,
+            height: (maxY - minY) + bPad * 2
+          };
+        }
+
+        if (showBoundingBox && hBbox && Number.isFinite(hBbox.x)) {
+          const { x, y, width, height } = hBbox;
+          const cornerSize = 18;
+          const bboxColor = handLabel === "Left" ? "#06B6D4" : "#10B981";
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = bboxColor;
+          ctx.shadowColor = bboxColor;
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.moveTo(x, y + cornerSize);
+          ctx.lineTo(x, y);
+          ctx.lineTo(x + cornerSize, y);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x + width - cornerSize, y);
+          ctx.lineTo(x + width, y);
+          ctx.lineTo(x + width, y + cornerSize);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x, y + height - cornerSize);
+          ctx.lineTo(x, y + height);
+          ctx.lineTo(x + cornerSize, y + height);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x + width - cornerSize, y + height);
+          ctx.lineTo(x + width, y + height);
+          ctx.lineTo(x + width, y + height - cornerSize);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          // Hand Identity & Recognition Pill
+          const tagText = `${handLabel} Hand \u2022 MediaPipe ${(handConf * 100).toFixed(0)}%`;
+          ctx.font = "bold 12px system-ui, -apple-system, sans-serif";
+          const textWidth = ctx.measureText(tagText).width;
+          const pillY = Math.max(12, y - 32);
           ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
           ctx.beginPath();
-          ctx.roundRect(pt.x - tw / 2 - 5, pt.y - 24, tw + 10, 16, 4);
+          ctx.roundRect(x, pillY, textWidth + 34, 26, 7);
           ctx.fill();
-          ctx.strokeStyle = val > 0.5 ? "#10B981" : "#F59E0B";
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
           ctx.lineWidth = 1;
           ctx.stroke();
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillText(text, pt.x - tw / 2, pt.y - 12);
-        });
-      }
-      if (showBoundingBox) {
-        const { x, y, width, height } = boundingBox;
-        const cornerSize = 18;
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = isRealHandDetected ? "#38BDF8" : "#818CF8";
-        ctx.shadowColor = isRealHandDetected ? "#38BDF8" : "#818CF8";
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        ctx.moveTo(x, y + cornerSize);
-        ctx.lineTo(x, y);
-        ctx.lineTo(x + cornerSize, y);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x + width - cornerSize, y);
-        ctx.lineTo(x + width, y);
-        ctx.lineTo(x + width, y + cornerSize);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, y + height - cornerSize);
-        ctx.lineTo(x, y + height);
-        ctx.lineTo(x + cornerSize, y + height);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x + width - cornerSize, y + height);
-        ctx.lineTo(x + width, y + height);
-        ctx.lineTo(x + width, y + height - cornerSize);
-        ctx.stroke();
-        const tagText = fingerPose?.isFreeMotion ? `\u{1F590}\uFE0F FREE MOTION \u2022 ${Math.round(confidence * 100)}%` : `${gesture} \u2022 ${Math.round(confidence * 100)}%`;
-        ctx.font = "bold 13px system-ui, -apple-system, sans-serif";
-        const textWidth = ctx.measureText(tagText).width;
-        const pillY = Math.max(12, y - 32);
-        ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
-        ctx.beginPath();
-        ctx.roundRect(x, pillY, textWidth + 36, 28, 8);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        const ringCenterX = x + 14;
-        const ringCenterY = pillY + 14;
-        ctx.beginPath();
-        ctx.arc(ringCenterX, ringCenterY, 6, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(ringCenterX, ringCenterY, 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * holdProgress);
-        ctx.strokeStyle = holdProgress >= 0.95 ? "#10B981" : "#F59E0B";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillText(tagText, x + 26, pillY + 19);
-        if (signMeaning && !fingerPose?.isFreeMotion) {
-          const transText = `Meaning: "${signMeaning.translatedText}"`;
-          ctx.font = "11px system-ui, -apple-system, sans-serif";
-          const transWidth = ctx.measureText(transText).width;
-          ctx.fillStyle = signMeaning.isCustom ? "rgba(168, 85, 247, 0.92)" : "rgba(16, 185, 129, 0.90)";
+
+          // Hold Progress Ring
+          const ringCenterX = x + 13;
+          const ringCenterY = pillY + 13;
           ctx.beginPath();
-          ctx.roundRect(x, pillY + 34, transWidth + 16, 20, 5);
-          ctx.fill();
+          ctx.arc(ringCenterX, ringCenterY, 5.5, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          const progress = hIdx === 0 && holdProgress ? holdProgress : 0;
+          ctx.beginPath();
+          ctx.arc(ringCenterX, ringCenterY, 5.5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+          ctx.strokeStyle = progress >= 0.95 ? "#10B981" : "#F59E0B";
+          ctx.lineWidth = 2.2;
+          ctx.stroke();
+
           ctx.fillStyle = "#FFFFFF";
-          ctx.fillText(transText, x + 8, pillY + 48);
+          ctx.fillText(tagText, x + 25, pillY + 18);
+
+          // Sub-pill with sign meaning
+          if (handSignMeaning && !handPose?.isFreeMotion) {
+            const transText = `"${handSignMeaning.translatedText}" (${handSignMeaning.signName})`;
+            ctx.font = "11px system-ui, -apple-system, sans-serif";
+            const transWidth = ctx.measureText(transText).width;
+            ctx.fillStyle = handSignMeaning.isCustom ? "rgba(168, 85, 247, 0.92)" : "rgba(16, 185, 129, 0.90)";
+            ctx.beginPath();
+            ctx.roundRect(x, pillY + 30, transWidth + 16, 20, 5);
+            ctx.fill();
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillText(transText, x + 8, pillY + 44);
+          }
         }
-      }
+
+        ctx.restore();
+      });
+
+      // 9. HUD Overlay
       if (showHUD) {
         const hudX = 16;
         const hudY = 16;
+        const numHands = handsToDraw.length;
         ctx.fillStyle = "rgba(15, 23, 42, 0.90)";
         ctx.beginPath();
-        ctx.roundRect(hudX, hudY, 260, 74, 12);
+        ctx.roundRect(hudX, hudY, 270, 74, 12);
         ctx.fill();
         ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.font = "bold 11px monospace";
         ctx.fillStyle = isRealHandDetected ? "#10B981" : "#818CF8";
-        ctx.fillText(`\u25CF ${isRealHandDetected ? "OPTICAL CV TRACKER" : "BIOMECHANICAL PHYSICS"}`, hudX + 12, hudY + 18);
+        ctx.fillText(`\u25CF ${isRealHandDetected ? "MEDIAPIPE HANDS ML" : "BIOMECHANICAL PHYSICS"}`, hudX + 12, hudY + 18);
         ctx.font = "10px monospace";
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText(`FPS: ${fps} | LAT: 8ms | 21 3D JOINTS`, hudX + 12, hudY + 33);
+        ctx.fillText(`HANDS: ${numHands} TRACKED | FPS: ${fps} | 21 3D JOINTS`, hudX + 12, hudY + 33);
         if (physicsTelemetry) {
           ctx.fillStyle = "#38BDF8";
           ctx.fillText(
@@ -1840,7 +2155,7 @@ class RealtimeHandTracker {
         const boxH = Math.min(460, cHeight * 0.65);
         const boxX = (cWidth - boxW) / 2;
         const boxY = (cHeight - boxH) / 2 + 10;
-        const isInside = isRealHandDetected && boundingBox.x > boxX - 40 && boundingBox.x + boundingBox.width < boxX + boxW + 40 && boundingBox.y > boxY - 40 && boundingBox.y + boundingBox.height < boxY + boxH + 40;
+        const isInside = isRealHandDetected && boundingBox && Number.isFinite(boundingBox.x) && boundingBox.x > boxX - 40 && boundingBox.x + boundingBox.width < boxX + boxW + 40 && boundingBox.y > boxY - 40 && boundingBox.y + boundingBox.height < boxY + boxH + 40;
         ctx.save();
         ctx.lineWidth = 2;
         ctx.setLineDash([8, 6]);

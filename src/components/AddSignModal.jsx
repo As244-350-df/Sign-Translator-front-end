@@ -204,7 +204,7 @@ const AddSignModal = ({ onClose, onSaveSign }) => {
             </div>
 
             <p className="text-[11px] text-slate-500">
-              Select a standard anatomical hand shape for TensorFlow 21-point recognition, or fine-tune finger curl values below:
+              Select a standard anatomical hand shape for Gemini AI Stream recognition, or fine-tune finger curl values below:
             </p>
 
             {

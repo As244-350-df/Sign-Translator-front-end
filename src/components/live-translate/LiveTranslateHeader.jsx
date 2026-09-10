@@ -15,7 +15,7 @@ export const LiveTranslateHeader = ({
             {currentLanguage.name} ({currentLanguage.code})
           </span>
           <span className="text-xs text-slate-400 font-medium">
-            TensorFlow HandPose Model Active ({totalRecognizedSigns} Signs Recognized)
+            Gemini AI Stream Recognition Active ({totalRecognizedSigns} Signs Recognized)
           </span>
         </div>
         <h1 className="text-xl font-bold text-slate-900 dark:text-white mt-1">

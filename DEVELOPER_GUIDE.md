@@ -8,7 +8,7 @@ This guide highlights the exact files, functions, and comment anchors (`// [CUST
 
 | Feature / Subsystem | Location | What to plug in |
 |---|---|---|
-| **Real ML Hand Tracking** | `/src/utils/gestureSimulation.ts` | MediaPipe Hands (`@mediapipe/hands`) / TensorFlow.js gesture model |
+| **Real ML Hand Tracking** | `/src/utils/aiStreamRecognizer.js` | MediaPipe Hands (`@mediapipe/hands`) / Gemini AI Stream (`gemini-3.8-flash`) |
 | **Production WebRTC SFU** | `/src/components/LiveSessionCallView.tsx` | LiveKit, Agora, Twilio Video, or Daily.co client SDKs |
 | **Real Cloud Firestore SDK** | `/src/utils/api.ts` | Firebase Client SDK (`firebase/firestore`, `firebase/auth`) |
 | **Firestore Backend Sync** | `/server.ts` | Firebase Admin SDK (`firebase-admin`), Cloud Functions, Firestore queries |
@@ -19,9 +19,9 @@ This guide highlights the exact files, functions, and comment anchors (`// [CUST
 ---
 
 ## 1. Computer Vision & Hand Landmark Detection
-**File:** `/src/utils/gestureSimulation.ts`
-- **Anchor:** `// [CUSTOM INTEGRATION POINT: ML Hand Tracking Engine]`
-- **Your Task:** Replace the lightweight simulated landmark generation with live MediaPipe Hands / TensorFlow.js tensor inference.
+**File:** `/src/utils/aiStreamRecognizer.js`
+- **Anchor:** `// [CUSTOM INTEGRATION POINT: Gemini AI Stream Recognition]`
+- **Your Task:** MediaPipe Vision landmarker detects 21 3D spatial hand points in a dedicated Web Worker, streaming continuously to the Gemini AI SSE endpoint (`gemini-3.8-flash`) for real-time sign recognition.
 
 ```typescript
 // Example snippet to connect:

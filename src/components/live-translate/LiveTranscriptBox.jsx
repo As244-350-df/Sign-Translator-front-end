@@ -1,4 +1,4 @@
-import { Volume2, Copy, Check, RotateCcw } from "lucide-react";
+import { Volume2, Copy, Check, RotateCcw, Sparkles } from "lucide-react";
 
 export const LiveTranscriptBox = ({
   fullSentence,
@@ -8,7 +8,9 @@ export const LiveTranscriptBox = ({
   onCopyTranscript,
   copied,
   highContrastCaptions,
-  recognizedSigns
+  recognizedSigns,
+  onGeminiTranslateSentence,
+  isGeminiTranslating = false
 }) => {
   return (
     <div className="lg:col-span-5 flex flex-col space-y-4">
@@ -16,9 +18,14 @@ export const LiveTranscriptBox = ({
       <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col flex-1">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-              Live Translated Sentence
+            <div className={`w-2.5 h-2.5 rounded-full ${isGeminiTranslating ? "bg-indigo-500 animate-ping" : "bg-emerald-500 animate-pulse"}`} />
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center space-x-1.5">
+              <span>Live Translated Sentence</span>
+              {isGeminiTranslating && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-400/40">
+                  Gemini AI Streaming...
+                </span>
+              )}
             </h3>
           </div>
           <div className="flex items-center space-x-1">
@@ -52,7 +59,7 @@ export const LiveTranscriptBox = ({
         />
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60">
+        <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60">
           <button
             onClick={onClearFullSentence}
             className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center space-x-1 cursor-pointer"
@@ -62,6 +69,18 @@ export const LiveTranscriptBox = ({
           </button>
 
           <div className="flex items-center space-x-2">
+            {onGeminiTranslateSentence && (
+              <button
+                onClick={onGeminiTranslateSentence}
+                disabled={isGeminiTranslating || (!fullSentence && recognizedSigns.length === 0)}
+                className="px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-400/40 text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer disabled:opacity-40"
+                title="Convert raw sign gloss sequence into natural, fluent English sentences via Gemini AI"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isGeminiTranslating ? "animate-spin" : ""}`} />
+                <span>{isGeminiTranslating ? "Polishing..." : "Gemini AI Polish"}</span>
+              </button>
+            )}
+
             <button
               onClick={onSpeakTranscript}
               className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-md shadow-indigo-500/20 transition-all cursor-pointer"

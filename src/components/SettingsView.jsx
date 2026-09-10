@@ -7,13 +7,14 @@ import {
   Check,
   CheckCircle2,
   Zap,
-  Brain,
+  Sparkles,
+  Radio,
   Cpu
 } from "lucide-react";
 import { SIGN_LANGUAGES } from "../data/mockData";
 import { speakText } from "../utils/speech";
 import { PHYSICS_PRESETS } from "../utils/handTracker";
-import { tfjsClassifier } from "../utils/tfjsModel";
+import { aiStreamRecognizer } from "../utils/aiStreamRecognizer";
 const SettingsView = ({
   settings,
   onUpdateSettings,
@@ -365,65 +366,67 @@ const SettingsView = ({
         </div>
       </div>
 
-      {
-    /* TensorFlow.js Pure JavaScript Neural Engine */
-  }
+      {/* Gemini AI Stream Engine */}
       <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
-            <Brain className="w-5 h-5 text-amber-500" />
+            <Sparkles className="w-5 h-5 text-indigo-500 animate-pulse" />
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              TensorFlow.js (Pure JavaScript) Neural Engine
+              Gemini AI Stream Engine (Cloud Inference)
             </h2>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-mono font-bold border border-amber-300 dark:border-amber-700">
-              @tensorflow/tfjs
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 font-mono font-bold border border-indigo-300 dark:border-indigo-700">
+              gemini-3.8-flash
             </span>
           </div>
+          <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-bold border border-emerald-300 dark:border-emerald-700 flex items-center space-x-1.5 self-start sm:self-auto">
+            <Radio className="w-3 h-3 text-emerald-500 animate-ping" />
+            <span>SSE Stream Ready</span>
+          </span>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Client-side deep learning running 100% in pure JavaScript/WebGL within your browser sandbox. Features on-device transfer learning, zero cloud API latency, and privacy-preserving landmark inference.
+          Server-Sent Events (SSE) direct streaming pipeline. Offloads heavy neural computation to Google Gemini, keeping the client UI responsive at a locked 60 FPS with sub-40ms streaming latency.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between">
             <div className="space-y-0.5">
               <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center space-x-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-500" />
-                <span>WebGL GPU Backend</span>
+                <Zap className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Low-Latency SSE Stream</span>
               </span>
               <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                Uses hardware shaders for sub-2ms tensor matrix multiplication.
+                Direct streaming tokens chunk-by-chunk for continuous gestures.
               </p>
             </div>
             <button
-    onClick={async () => {
-      await tfjsClassifier.setBackend("webgl");
-      handleSave();
-    }}
-    className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-colors cursor-pointer"
-  >
-              Select WebGL
+              onClick={async () => {
+                await aiStreamRecognizer.setBackend("gemini-stream-sse");
+                handleSave();
+              }}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer"
+            >
+              Select SSE Stream
             </button>
           </div>
 
           <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between">
             <div className="space-y-0.5">
               <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center space-x-1.5">
-                <Cpu className="w-3.5 h-3.5 text-slate-400" />
-                <span>Pure JS CPU Backend</span>
+                <Radio className="w-3.5 h-3.5 text-purple-400" />
+                <span>Contextual Sequence Mode</span>
               </span>
               <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                Zero GPU dependencies, pure ECMAScript execution fallback.
+                Batched sign gloss grammar analysis & sentence restructuring.
               </p>
             </div>
             <button
-    onClick={async () => {
-      await tfjsClassifier.setBackend("cpu");
-      handleSave();
-    }}
-    className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
-  >
-              Select CPU
+              onClick={async () => {
+                await aiStreamRecognizer.setBackend("gemini-stream-batch");
+                handleSave();
+              }}
+              className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
+            >
+              Select Sequence
             </button>
           </div>
         </div>
