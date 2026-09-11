@@ -151,17 +151,21 @@ const LiveGestureOverlayHUD = memo(({
           </button>
         )}
 
-        {/* MediaPipe Hands 21 3D Landmark Tracking Badge */}
+        {/* MediaPipe Hands 21 3D Landmark Tracking Badge & Worker Status */}
         <div
           className={`flex items-center space-x-1.5 backdrop-blur-md px-2.5 py-1.5 rounded-full border text-[11px] font-bold shadow-lg transition-all ${
             isRealHand
               ? "bg-emerald-950/90 text-emerald-300 border-emerald-500/60"
               : "bg-slate-900/80 text-slate-300 border-slate-700/80"
           }`}
-          title="MediaPipe Hands 21 3D Landmark detection tracking on live camera stream"
+          title="MediaPipe Hands 21 3D Landmark detection offloaded to dedicated Web Worker"
         >
           <Zap className={`w-3.5 h-3.5 ${isRealHand ? "text-emerald-400 animate-pulse" : "text-emerald-400"}`} />
-          <span>{isRealHand ? "MediaPipe Hands: 21 Landmarks Tracked" : "MediaPipe Hands: 21 Landmarks Ready"}</span>
+          <span>
+            {isRealHand
+              ? `MediaPipe Hands: 21 Landmarks ${tracker?.workerReady ? "(Web Worker)" : ""}`
+              : `MediaPipe Hands: ${tracker?.workerReady ? "Web Worker Ready" : "Ready"}`}
+          </span>
         </div>
       </div>
 

@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MOCK_INTERPRETERS } from "../data/mockData";
 import { speakText, stopSpeaking } from "../utils/speech";
 import { RealtimeHandTracker, SIGN_DICTIONARY } from "../utils/handTracker";
+import { mediaPipeTracker } from "../utils/mediaPipeTracker";
 import { LiveSessionRecorder } from "../utils/mediaRecorder";
+import { geminiService } from "../services/geminiService";
 import { RecordedVideoModal } from "./RecordedVideoModal";
 import { AddSignModal } from "./AddSignModal";
 import { LiveSessionHeader } from "./live-session/LiveSessionHeader";
@@ -64,9 +66,27 @@ const LiveSessionCallView = ({
   const [useRealCameraLocal, setUseRealCameraLocal] = useState(true);
   const [mainViewMode, setMainViewMode] = useState("interpreter");
 
+  // Gemini AI landmark translation in live call
+  const [geminiTranslation, setGeminiTranslation] = useState(null);
+  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
+  const [geminiAiActive, setGeminiAiActive] = useState(true);
+
   const compositeCanvasRef = useRef(null);
-  const handTrackerRef = useRef(new RealtimeHandTracker());
-  const recorderRef = useRef(new LiveSessionRecorder());
+  const pipCanvasRef = useRef(null);
+  const lastBoundVideoRef = useRef(null);
+  const lastBoundCanvasRef = useRef(null);
+  // Store detection model instance strictly in useRef instead of useState
+  const detectionModelRef = useRef(mediaPipeTracker);
+  const handTrackerRef = useRef(null);
+  if (!handTrackerRef.current) {
+    handTrackerRef.current = RealtimeHandTracker.getInstance ? RealtimeHandTracker.getInstance() : new RealtimeHandTracker();
+  }
+  const handTracker = handTrackerRef.current;
+
+  const recorderRef = useRef(null);
+  if (!recorderRef.current) {
+    recorderRef.current = new LiveSessionRecorder();
+  }
   const animationFrameId = useRef(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -139,14 +159,41 @@ const LiveSessionCallView = ({
     return `${mins.toString().padStart(2, "0")}:${remainingSecs.toString().padStart(2, "0")}`;
   };
 
+  const handleTriggerGeminiTranslate = useCallback(async () => {
+    setIsGeminiLoading(true);
+    try {
+      const tracker = handTrackerRef.current;
+      const landmarks = tracker?.smoothedLandmarks || tracker?.allHands?.[0]?.landmarks || [];
+      const currentSign = tracker?.getCurrentSignMeaning?.()?.signName || tracker?.currentSignKey || "HELLO";
+      const res = await geminiService.translateLandmarks({
+        landmarks,
+        allHands: tracker?.allHands || [],
+        fingerFlexions: tracker?.fingerPose || null,
+        handedness: tracker?.handedness || "Right",
+        candidateSign: currentSign,
+        signLanguage: settingsRef.current?.primarySignLanguage || "ASL"
+      });
+      if (res) {
+        setGeminiTranslation(res);
+        const translatedTxt = res.englishTranslation || res.translation || currentSign;
+        setCurrentCaption(`"You (Gemini AI ${settingsRef.current?.primarySignLanguage || "ASL"}): ${translatedTxt}"`);
+        if (autoSpeakSigns) {
+          speakText(translatedTxt, settingsRef.current?.speechVoiceRate, settingsRef.current?.speechVoicePitch);
+        }
+      }
+    } catch (err) {
+      console.warn("Manual Gemini call translation error:", err);
+    } finally {
+      setIsGeminiLoading(false);
+    }
+  }, [autoSpeakSigns]);
+
   useEffect(() => {
-    const canvas = compositeCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const mainCanvas = compositeCanvasRef.current;
+    if (!mainCanvas) return;
     const tracker = handTrackerRef.current;
     let lastDetectionTime = 0;
-    const DETECTION_INTERVAL_MS = 50;
+    const DETECTION_INTERVAL_MS = 60; // Smooth 16 FPS vision processing to eliminate main-thread stutter
 
     const renderLoop = (time) => {
       if (document.hidden) {
@@ -155,17 +202,32 @@ const LiveSessionCallView = ({
       }
       const activeVideo =
         mainViewMode === "camera"
-          ? mainVideoRef.current || localVideoRef.current
-          : localVideoRef.current || mainVideoRef.current;
-      if (activeVideo) {
-        tracker.setElements(activeVideo, canvas);
+          ? (mainVideoRef.current || localVideoRef.current)
+          : (localVideoRef.current || mainVideoRef.current);
+
+      const targetCanvas =
+        mainViewMode === "camera"
+          ? compositeCanvasRef.current
+          : (pipCanvasRef.current || compositeCanvasRef.current);
+
+      // PERFORMANCE OPTIMIZATION: Only bind elements when the reference actually changes,
+      // preventing redundant async initializations at 60 FPS
+      if (activeVideo && targetCanvas) {
+        if (activeVideo !== lastBoundVideoRef.current || targetCanvas !== lastBoundCanvasRef.current) {
+          tracker.setElements(activeVideo, targetCanvas);
+          lastBoundVideoRef.current = activeVideo;
+          lastBoundCanvasRef.current = targetCanvas;
+        }
       }
+
       const now = performance.now();
       const shouldRunDetection = now - lastDetectionTime >= DETECTION_INTERVAL_MS;
       if (shouldRunDetection) {
         lastDetectionTime = now;
       }
+
       const detection = tracker.processFrame(time, shouldRunDetection);
+
       if (detection.isCommitted && detection.signMeaning) {
         const sign = detection.signMeaning;
         const timeStr = new Date().toLocaleTimeString([], {
@@ -202,18 +264,55 @@ const LiveSessionCallView = ({
             }
           ]);
         }
+
+        // GEMINI AI INTEGRATION IN LIVE CALL:
+        // Automatically translate real hand landmarks via Gemini API
+        if (geminiAiActive && detection.landmarks && detection.landmarks.length >= 21) {
+          geminiService.translateLandmarks({
+            landmarks: detection.landmarks,
+            allHands: detection.allHands || [],
+            fingerFlexions: detection.fingerPose || null,
+            handedness: detection.handedness || "Right",
+            candidateSign: sign.translatedText || sign.signName,
+            signLanguage: settingsRef.current?.primarySignLanguage || "ASL"
+          }).then((aiResult) => {
+            if (aiResult) {
+              setGeminiTranslation(aiResult);
+              const aiText = aiResult.englishTranslation || aiResult.translation || sign.translatedText;
+              setCurrentCaption(`"You (Gemini AI ${settingsRef.current?.primarySignLanguage || "ASL"}): ${aiText}"`);
+            }
+          }).catch((err) => {
+            console.warn("Gemini Live Call translation note:", err);
+          });
+        }
       }
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (showLandmarkOverlay) {
-        tracker.draw(ctx, detection, {
-          color: detection.isRealHandDetected ? "#10B981" : "#6366F1",
-          jointColor: "#38BDF8",
-          showBoundingBox: true,
-          showHUD: false,
-          showAlignmentGuide,
-          labelPrefix: `${settingsRef.current.primarySignLanguage || "ASL"} Live Session`
-        });
+
+      // Draw landmarks on the active canvas (main stage or PiP)
+      if (targetCanvas) {
+        const ctx = targetCanvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+          if (showLandmarkOverlay) {
+            tracker.draw(ctx, detection, {
+              color: detection.isRealHandDetected ? "#10B981" : "#6366F1",
+              jointColor: "#38BDF8",
+              showBoundingBox: true,
+              showHUD: false,
+              showAlignmentGuide: mainViewMode === "camera" && showAlignmentGuide,
+              labelPrefix: `${settingsRef.current.primarySignLanguage || "ASL"} Live Session`
+            });
+          }
+        }
       }
+
+      // Also clear main composite canvas if we are currently drawing on PiP
+      if (mainViewMode !== "camera" && compositeCanvasRef.current && compositeCanvasRef.current !== targetCanvas) {
+        const mainCtx = compositeCanvasRef.current.getContext("2d");
+        if (mainCtx) {
+          mainCtx.clearRect(0, 0, compositeCanvasRef.current.width, compositeCanvasRef.current.height);
+        }
+      }
+
       animationFrameId.current = requestAnimationFrame(renderLoop);
     };
 
@@ -223,7 +322,7 @@ const LiveSessionCallView = ({
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [showLandmarkOverlay, showAlignmentGuide, mainViewMode, autoSpeakSigns, autoChatSigns, mainVideoRef, localVideoRef]);
+  }, [showLandmarkOverlay, showAlignmentGuide, mainViewMode, autoSpeakSigns, autoChatSigns, geminiAiActive, mainVideoRef, localVideoRef]);
 
   useEffect(() => {
     const captionList = [
@@ -407,6 +506,9 @@ const LiveSessionCallView = ({
             onSpeakCurrentCaption={handleSpeakCurrentCaption}
             currentCaption={currentCaption}
             fontSize={settings.fontSize}
+            geminiTranslation={geminiTranslation}
+            isGeminiLoading={isGeminiLoading}
+            onTriggerGeminiTranslate={handleTriggerGeminiTranslate}
           />
 
           <LiveSessionPipView
@@ -417,6 +519,10 @@ const LiveSessionCallView = ({
             cameraPan={cameraPan}
             onZoomIn={handleZoomIn}
             onZoomOut={handleZoomOut}
+            mainViewMode={mainViewMode}
+            interpreter={interpreter}
+            pipCanvasRef={pipCanvasRef}
+            showLandmarkOverlay={showLandmarkOverlay}
             onToggleMainViewMode={() =>
               setMainViewMode(mainViewMode === "interpreter" ? "camera" : "interpreter")
             }
@@ -483,6 +589,9 @@ const LiveSessionCallView = ({
         onEndCall={onEndCall}
         showChat={showChat}
         onToggleChat={() => setShowChat(!showChat)}
+        geminiAiActive={geminiAiActive}
+        onToggleGeminiAi={() => setGeminiAiActive((prev) => !prev)}
+        isGeminiTranslating={isGeminiLoading}
       />
 
       {showAddSignModal && (

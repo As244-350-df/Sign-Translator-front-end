@@ -20,6 +20,7 @@ import { LiveTranscriptBox } from "./live-translate/LiveTranscriptBox";
 import { TextToSignInputPanel } from "./live-translate/TextToSignInputPanel";
 import { CameraToolbar } from "./live-translate/CameraToolbar";
 import { CameraFeedStage } from "./live-translate/CameraFeedStage";
+import { ResourceConnectionGate } from "./live-translate/ResourceConnectionGate";
 
 export const LiveTranslateView = ({
   settings,
@@ -272,6 +273,8 @@ export const LiveTranslateView = ({
         onOpenAddSignModal={() => setShowAddSignModal(true)}
         translationMode={translationMode}
         onChangeTranslationMode={setTranslationMode}
+        allResourcesReady={tracking.allResourcesReady}
+        resourceStatus={tracking.resourceStatus}
       />
 
       {translationMode === "sign_to_text" ? (
@@ -292,111 +295,124 @@ export const LiveTranslateView = ({
               onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
             />
 
-            {isInIframe && tracking.inputSourceMode === "webcam" && (
-              <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md animate-in fade-in">
-                <div className="flex items-center space-x-2.5 min-w-0 pr-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span className="text-[11px] sm:text-xs leading-tight">
-                    Running inside preview frame: Browser security may restrict camera prompts in iframes.
-                  </span>
-                </div>
-                <div className="flex items-center space-x-2 shrink-0">
-                  <a
-                    href={getSafeCurrentUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Open in New Tab</span>
-                  </a>
-                  <button
-                    onClick={() => setShowDiagnosticsOverlay(true)}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center space-x-1 transition-colors border border-slate-700 cursor-pointer"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="hidden sm:inline">Webcam Guide</span>
-                  </button>
-                </div>
+            {/* Strict Resource Readiness Gate: Camera view & features only appear once AI stream & MediaPipe vision are ready */}
+            {!tracking.allResourcesReady ? (
+              <ResourceConnectionGate
+                resourceStatus={tracking.resourceStatus}
+                onSelectSimulator={() => tracking.handleSelectInputMode("simulator")}
+                onSelectDemoClip={() => tracking.handleSelectDemoClip("hello")}
+                onRetryCamera={tracking.handleRetryCamera}
+                cameraError={tracking.cameraError}
+              />
+            ) : (
+              <div className="space-y-4 animate-in fade-in zoom-in-95 duration-500">
+                {isInIframe && tracking.inputSourceMode === "webcam" && (
+                  <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md animate-in fade-in">
+                    <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className="text-[11px] sm:text-xs leading-tight">
+                        Running inside preview frame: Browser security may restrict camera prompts in iframes.
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <a
+                        href={getSafeCurrentUrl()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-colors shadow-sm cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open in New Tab</span>
+                      </a>
+                      <button
+                        onClick={() => setShowDiagnosticsOverlay(true)}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center space-x-1 transition-colors border border-slate-700 cursor-pointer"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
+                        <span className="hidden sm:inline">Webcam Guide</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <CameraFeedStage
+                  isCameraActive={isCameraActive}
+                  setIsCameraActive={setIsCameraActive}
+                  tracking={tracking}
+                  isInIframe={isInIframe}
+                  settings={settings}
+                  isRecording={isRecording}
+                  recorder={recorderRef.current}
+                  onCommitSign={handleCommitCurrentSign}
+                  onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
+                  onToggleAutoCenter={handleToggleAutoCenter}
+                  onZoomIn={handleZoomIn}
+                  onZoomOut={handleZoomOut}
+                  onSetZoom={handleSetZoom}
+                  onResetZoom={handleResetZoom}
+                  onPanNudge={handlePanNudge}
+                />
+
+                <CameraToolbar
+                  isCameraActive={isCameraActive}
+                  onToggleCameraActive={() => setIsCameraActive(!isCameraActive)}
+                  useRealWebcam={tracking.useRealWebcam}
+                  cameraStreamStatus={tracking.cameraStreamStatus}
+                  onSwitchInputMode={() => {
+                    if (!tracking.useRealWebcam) {
+                      tracking.handleSelectInputMode("webcam");
+                    } else {
+                      tracking.handleSelectInputMode("simulator");
+                    }
+                  }}
+                  onRetryCamera={tracking.handleRetryCamera}
+                  showMesh={tracking.showMesh}
+                  onToggleMesh={() => tracking.setShowMesh(!tracking.showMesh)}
+                  autoSpeakOnCommit={tracking.autoSpeakOnCommit}
+                  onToggleAutoSpeak={() => tracking.setAutoSpeakOnCommit(!tracking.autoSpeakOnCommit)}
+                  geminiTranslationEnabled={tracking.geminiTranslationEnabled}
+                  onToggleGeminiTranslation={() => tracking.setGeminiTranslationEnabled(!tracking.geminiTranslationEnabled)}
+                  onCaptureGeminiVision={tracking.captureGeminiVision}
+                  isGeminiVisionLoading={tracking.isGeminiVisionLoading}
+                  isRecording={isRecording}
+                  onToggleRecording={handleToggleRecording}
+                  recorder={recorderRef.current}
+                  showDiagnosticsOverlay={showDiagnosticsOverlay}
+                  onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
+                  isDarkFeedWarning={isDarkFeedWarning}
+                  activeStreamResolution={tracking.activeStreamResolution}
+                  isAutoCentering={tracking.isAutoCentering}
+                  onToggleAutoCenter={handleToggleAutoCenter}
+                  cameraZoom={tracking.cameraZoom}
+                  onZoomIn={handleZoomIn}
+                  onZoomOut={handleZoomOut}
+                  onOpenZoomMenu={() => tracking.setShowZoomMenu(!tracking.showZoomMenu)}
+                  showAlignmentGuide={tracking.showAlignmentGuide}
+                  onToggleAlignmentGuide={() => tracking.setShowAlignmentGuide(!tracking.showAlignmentGuide)}
+                  showFreeFingerStudio={showFreeFingerStudio}
+                  onToggleFreeFingerStudio={() => setShowFreeFingerStudio(!showFreeFingerStudio)}
+                  onOpenKeyboard={onOpenKeyboard}
+                  onOpenTutorial={onOpenTutorial}
+                />
+
+                {showFreeFingerStudio && (
+                  <FreeFingerController
+                    handTracker={tracking.handTrackerRef.current}
+                    currentPose={null}
+                    onPoseChange={(p) => {
+                      tracking.handTrackerRef.current.setFreePose(p);
+                    }}
+                  />
+                )}
+
+                <AIStreamEngineHUD
+                  isEnabled={isAIStreamEnabled}
+                  onToggleEnabled={handleToggleAIStream}
+                  onTrainSample={handleTrainSample}
+                  onSwitchBackend={handleSwitchBackend}
+                />
               </div>
             )}
-
-            <CameraFeedStage
-              isCameraActive={isCameraActive}
-              setIsCameraActive={setIsCameraActive}
-              tracking={tracking}
-              isInIframe={isInIframe}
-              settings={settings}
-              isRecording={isRecording}
-              recorder={recorderRef.current}
-              onCommitSign={handleCommitCurrentSign}
-              onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
-              onToggleAutoCenter={handleToggleAutoCenter}
-              onZoomIn={handleZoomIn}
-              onZoomOut={handleZoomOut}
-              onSetZoom={handleSetZoom}
-              onResetZoom={handleResetZoom}
-              onPanNudge={handlePanNudge}
-            />
-
-            <CameraToolbar
-              isCameraActive={isCameraActive}
-              onToggleCameraActive={() => setIsCameraActive(!isCameraActive)}
-              useRealWebcam={tracking.useRealWebcam}
-              cameraStreamStatus={tracking.cameraStreamStatus}
-              onSwitchInputMode={() => {
-                if (!tracking.useRealWebcam) {
-                  tracking.handleSelectInputMode("webcam");
-                } else {
-                  tracking.handleSelectInputMode("simulator");
-                }
-              }}
-              onRetryCamera={tracking.handleRetryCamera}
-              showMesh={tracking.showMesh}
-              onToggleMesh={() => tracking.setShowMesh(!tracking.showMesh)}
-              autoSpeakOnCommit={tracking.autoSpeakOnCommit}
-              onToggleAutoSpeak={() => tracking.setAutoSpeakOnCommit(!tracking.autoSpeakOnCommit)}
-              geminiTranslationEnabled={tracking.geminiTranslationEnabled}
-              onToggleGeminiTranslation={() => tracking.setGeminiTranslationEnabled(!tracking.geminiTranslationEnabled)}
-              onCaptureGeminiVision={tracking.captureGeminiVision}
-              isGeminiVisionLoading={tracking.isGeminiVisionLoading}
-              isRecording={isRecording}
-              onToggleRecording={handleToggleRecording}
-              recorder={recorderRef.current}
-              showDiagnosticsOverlay={showDiagnosticsOverlay}
-              onOpenDiagnostics={() => setShowDiagnosticsOverlay(true)}
-              isDarkFeedWarning={isDarkFeedWarning}
-              activeStreamResolution={tracking.activeStreamResolution}
-              isAutoCentering={tracking.isAutoCentering}
-              onToggleAutoCenter={handleToggleAutoCenter}
-              cameraZoom={tracking.cameraZoom}
-              onZoomIn={handleZoomIn}
-              onZoomOut={handleZoomOut}
-              onOpenZoomMenu={() => tracking.setShowZoomMenu(!tracking.showZoomMenu)}
-              showAlignmentGuide={tracking.showAlignmentGuide}
-              onToggleAlignmentGuide={() => tracking.setShowAlignmentGuide(!tracking.showAlignmentGuide)}
-              showFreeFingerStudio={showFreeFingerStudio}
-              onToggleFreeFingerStudio={() => setShowFreeFingerStudio(!showFreeFingerStudio)}
-              onOpenKeyboard={onOpenKeyboard}
-              onOpenTutorial={onOpenTutorial}
-            />
-
-            {showFreeFingerStudio && (
-              <FreeFingerController
-                handTracker={tracking.handTrackerRef.current}
-                currentPose={null}
-                onPoseChange={(p) => {
-                  tracking.handTrackerRef.current.setFreePose(p);
-                }}
-              />
-            )}
-
-            <AIStreamEngineHUD
-              isEnabled={isAIStreamEnabled}
-              onToggleEnabled={handleToggleAIStream}
-              onTrainSample={handleTrainSample}
-              onSwitchBackend={handleSwitchBackend}
-            />
 
             <SignDictionaryPanel
               dictionaryList={dictionaryList}

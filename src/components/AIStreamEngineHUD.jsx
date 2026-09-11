@@ -10,9 +10,12 @@ import {
   Gauge,
   Radio,
   Send,
-  Sliders
+  Sliders,
+  ShieldCheck,
+  AlertTriangle
 } from "lucide-react";
 import { AI_SIGN_CLASSES, aiStreamRecognizer } from "../utils/aiStreamRecognizer";
+import { geminiService } from "../services/geminiService";
 
 export const AIStreamEngineHUD = ({
   telemetry: propTelemetry,
@@ -28,14 +31,31 @@ export const AIStreamEngineHUD = ({
   const [isStreamingTest, setIsStreamingTest] = useState(false);
   const [testStreamText, setTestStreamText] = useState("");
   const [internalTelemetry, setInternalTelemetry] = useState(() => propTelemetry || aiStreamRecognizer.getTelemetry());
+  const [providerStatus, setProviderStatus] = useState(() => geminiService.getProviderStatus());
 
   useEffect(() => {
     const updateTelemetry = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       setInternalTelemetry(aiStreamRecognizer.getTelemetry());
     };
     updateTelemetry();
-    const interval = setInterval(updateTelemetry, isExpanded ? 500 : 1200);
-    return () => clearInterval(interval);
+    // Only poll telemetry frequently if the HUD is visibly expanded
+    const interval = setInterval(updateTelemetry, isExpanded ? 800 : 3500);
+
+    const unsubscribe = geminiService.subscribeToStatus((status) => {
+      setProviderStatus({ ...status });
+    });
+    geminiService.fetchProviderStatus();
+    const statusInterval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      geminiService.fetchProviderStatus();
+    }, isExpanded ? 10000 : 30000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(statusInterval);
+      unsubscribe();
+    };
   }, [isExpanded]);
 
   const telemetry = propTelemetry || internalTelemetry;
@@ -96,17 +116,48 @@ export const AIStreamEngineHUD = ({
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h3 className="text-sm font-bold text-white flex items-center space-x-1.5">
+              <h3 className="text-sm font-bold text-white flex items-center space-x-1.5 flex-wrap gap-1">
                 <span>Gemini AI Stream Engine</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-extrabold border border-emerald-500/30 flex items-center space-x-1">
                   <Radio className="w-2.5 h-2.5 animate-ping text-emerald-400" />
                   <span>LIVE SSE STREAM</span>
                 </span>
+                {telemetry?.workerOffloaded && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono font-bold border border-indigo-500/30 flex items-center space-x-1">
+                    <Zap className="w-2.5 h-2.5 text-indigo-400" />
+                    <span>WEB WORKER OFFLOADED</span>
+                  </span>
+                )}
               </h3>
             </div>
-            <p className="text-xs text-slate-400">
-              Model: <span className="text-indigo-300 font-mono font-semibold">gemini-3.8-flash</span> • Continuous Sign Recognition & Instant Translation Stream
-            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-0.5">
+              <p className="text-xs text-slate-400">
+                Model:{" "}
+                <span className="text-indigo-300 font-mono font-semibold">
+                  {providerStatus?.activeProvider === "huggingface"
+                    ? `HuggingFace (${providerStatus.huggingFaceModel || "Llama-3.2-3B"})`
+                    : providerStatus?.activeProvider === "kinematic-rules"
+                    ? "Kinematic Rule Engine (Offline Continuity)"
+                    : "gemini-3.8-flash"}
+                </span>
+              </p>
+              {providerStatus?.geminiQuotaExceeded ? (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-medium border border-amber-500/30 flex items-center space-x-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-400" />
+                  <span>
+                    Quota Fallback Active
+                    {providerStatus.cooldownRemainingSeconds > 0
+                      ? ` (${providerStatus.cooldownRemainingSeconds}s)`
+                      : ""}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-medium border border-emerald-500/30 flex items-center space-x-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                  <span>Auto-Failover Active</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

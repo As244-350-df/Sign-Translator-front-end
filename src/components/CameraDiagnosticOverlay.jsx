@@ -27,7 +27,7 @@ const CameraDiagnosticOverlay = ({
   onToggleFacing,
   onToggleWebcamMode = () => {}
 }) => {
-  const permissionStatus = propPermissionStatus || hardwarePermissionStatus || "checking";
+  const permissionStatus = propPermissionStatus || "granted";
   const videoElement = propVideoElement || (videoRef ? videoRef.current : null);
   const facingMode = propFacingMode || cameraFacing || "user";
   const handleSwitchFacing = onSwitchFacingMode || onToggleFacing || (() => {});

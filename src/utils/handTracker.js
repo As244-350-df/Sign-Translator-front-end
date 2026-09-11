@@ -625,6 +625,16 @@ let SIGN_DICTIONARY = {
   ...loadSavedCustomSigns()
 };
 class RealtimeHandTracker {
+  static instance = null;
+  static isMediaPipeInitStarted = false;
+
+  static getInstance() {
+    if (!RealtimeHandTracker.instance) {
+      RealtimeHandTracker.instance = new RealtimeHandTracker();
+    }
+    return RealtimeHandTracker.instance;
+  }
+
   videoElement = null;
   canvasElement = null;
   offscreenCanvas;
@@ -705,13 +715,37 @@ class RealtimeHandTracker {
   lastStreamTelemetryTime = 0;
 
   // Web Worker Offloading Engine
+  static instance = null;
   worker = null;
   isWorkerBusy = false;
   latestWorkerDetection = null;
   frameSeq = 0;
   workerReady = false;
+  workerBackend = "Initializing...";
+  workerReadyCallbacks = [];
+
+  static getInstance() {
+    if (!RealtimeHandTracker.instance) {
+      RealtimeHandTracker.instance = new RealtimeHandTracker();
+    }
+    return RealtimeHandTracker.instance;
+  }
+
+  onWorkerReady(cb) {
+    if (this.workerReady) {
+      cb(true, this.workerBackend);
+      return () => {};
+    }
+    this.workerReadyCallbacks.push(cb);
+    return () => {
+      this.workerReadyCallbacks = this.workerReadyCallbacks.filter((fn) => fn !== cb);
+    };
+  }
 
   constructor() {
+    if (!RealtimeHandTracker.instance) {
+      RealtimeHandTracker.instance = this;
+    }
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCanvas.width = 160;
     this.offscreenCanvas.height = 120;
@@ -719,20 +753,79 @@ class RealtimeHandTracker {
     this.customSigns = loadSavedCustomSigns();
     this.syncDictionary();
     this.initPhysicsNodes();
-    mediaPipeTracker.initialize().then((ready) => {
-      if (ready) {
-        console.log("[RealtimeHandTracker] MediaPipe ML initialized and ready");
-      }
-    }).catch((err) => {
-      console.warn("[RealtimeHandTracker] MediaPipe init error:", err);
-    });
-    aiStreamRecognizer.initialize().catch((err) => {
-      console.warn("[RealtimeHandTracker] AI Stream engine background init:", err);
-    });
+    this.initWorker();
+
+    // Guard MediaPipe background initialization for fallback if worker fails
+    if (!RealtimeHandTracker.isMediaPipeInitStarted) {
+      RealtimeHandTracker.isMediaPipeInitStarted = true;
+      aiStreamRecognizer.initialize().catch((err) => {
+        console.warn("[RealtimeHandTracker] AI Stream engine background init:", err);
+      });
+    }
   }
 
   initWorker() {
-    // MediaPipe processes on main thread with GPU acceleration for zero-latency tracking
+    if (typeof window === "undefined" || typeof Worker === "undefined") {
+      return;
+    }
+    if (this.worker) return;
+
+    try {
+      this.worker = new Worker(
+        new URL("../workers/handTracking.worker.js", import.meta.url),
+        { type: "module" }
+      );
+
+      this.worker.onmessage = (e) => {
+        const data = e.data;
+        if (!data) return;
+
+        if (data.type === "WORKER_READY") {
+          this.workerReady = true;
+          this.workerBackend = data.backend || "MediaPipe Vision (Web Worker)";
+          console.log(`[RealtimeHandTracker] Vision Web Worker ready: ${this.workerBackend}`);
+          this.workerReadyCallbacks.forEach((cb) => {
+            try { cb(true, this.workerBackend); } catch {}
+          });
+        } else if (data.type === "DETECTION_RESULT") {
+          this.isWorkerBusy = false;
+          if (data.detection) {
+            this.latestWorkerDetection = data.detection;
+            this.lastWorkerResultTime = performance.now();
+            if (data.detection.isRealHandDetected) {
+              this.isRealHandDetected = true;
+              this.lastHandSeenTime = performance.now();
+            }
+          }
+        }
+      };
+
+      this.worker.onerror = (err) => {
+        console.warn("[RealtimeHandTracker] Vision Worker error, engaging main-thread fallback:", err);
+        this.isWorkerBusy = false;
+        // Lazily initialize main-thread MediaPipe only if worker encounters error
+        mediaPipeTracker.initialize().catch(() => {});
+      };
+
+      this.worker.postMessage({
+        type: "INIT",
+        customSigns: this.customSigns,
+        physicsPreset: this.physicsConfig?.preset || "biological"
+      });
+    } catch (err) {
+      console.warn("[RealtimeHandTracker] Could not create vision worker:", err);
+      mediaPipeTracker.initialize().catch(() => {});
+    }
+  }
+
+  destroy() {
+    if (this.worker) {
+      try {
+        this.worker.terminate();
+      } catch {}
+      this.worker = null;
+    }
+    this.workerReady = false;
   }
 
   postWorkerConfig() {
@@ -806,6 +899,7 @@ class RealtimeHandTracker {
         filterZ: { x: 0, dx: 0, lastTime: now }
       });
     }
+    this._safePtsBuffer = Array.from({ length: 21 }, () => ({ x: 640, y: 360, z: 0 }));
   }
   setPhysicsConfig(config) {
     this.physicsConfig = {
@@ -918,9 +1012,6 @@ class RealtimeHandTracker {
     this.videoElement = video;
     this.canvasElement = canvas;
     this.isMirrored = isMirrored;
-    mediaPipeTracker.initialize().catch((err) => {
-      console.warn("[HandTracker] MediaPipe background init note:", err);
-    });
   }
   syncDictionary() {
     SIGN_DICTIONARY = {
@@ -972,6 +1063,14 @@ class RealtimeHandTracker {
   getCurrentSignMeaning() {
     return SIGN_DICTIONARY[this.currentSignKey] || SIGN_DICTIONARY["HELLO"];
   }
+  getAIStreamTelemetry() {
+    const now = performance.now();
+    if (!this.lastStreamTelemetry || now - this.lastStreamTelemetryTime > 500) {
+      this.lastStreamTelemetry = aiStreamRecognizer.getTelemetry();
+      this.lastStreamTelemetryTime = now;
+    }
+    return this.lastStreamTelemetry;
+  }
   getHoldProgress() {
     const elapsed = performance.now() - this.signHoldStartTime;
     return Math.min(1, Math.max(0, elapsed / this.HOLD_DURATION_MS));
@@ -1022,7 +1121,93 @@ class RealtimeHandTracker {
     let mpAllHands = [];
     let mpHandedness = "Right";
 
-    if (this.videoElement && this.videoElement.readyState >= 2) {
+    // 1. Offload frame to Web Worker asynchronously (zero main-thread blocking)
+    if (this.worker && this.workerReady && this.videoElement && this.videoElement.readyState >= 2) {
+      if (!this.isWorkerBusy && typeof createImageBitmap === "function") {
+        this.isWorkerBusy = true;
+        createImageBitmap(this.videoElement).then((bitmap) => {
+          if (!this.worker) {
+            try { bitmap.close(); } catch {}
+            this.isWorkerBusy = false;
+            return;
+          }
+          this.worker.postMessage({
+            type: "PROCESS_FRAME",
+            bitmap,
+            timestamp,
+            width,
+            height,
+            forceDetection,
+            isMirrored: this.isMirrored !== false,
+            frameId: ++this.frameSeq
+          }, [bitmap]);
+        }).catch(() => {
+          this.isWorkerBusy = false;
+        });
+      }
+    }
+
+    // 2. If Web Worker has provided detection results, utilize them directly
+    if (this.workerReady && this.latestWorkerDetection) {
+      const d = this.latestWorkerDetection;
+      const isFresh = (now - (this.lastWorkerResultTime || now)) < 1500;
+      hasRealHand = d.isRealHandDetected && isFresh;
+      this.isRealHandDetected = hasRealHand;
+
+      if (d.landmarks && d.landmarks.length >= 21) {
+        this.smoothedLandmarks = d.landmarks;
+      }
+      if (d.pose) {
+        this.smoothedPose = { ...d.pose };
+      }
+      if (d.physicsTelemetry) {
+        this.physicsTelemetry = { ...d.physicsTelemetry };
+      }
+      if (d.currentSignKey) {
+        this.currentSignKey = d.currentSignKey;
+      }
+
+      const activeSign = d.signMeaning || this.signDictionary[this.currentSignKey] || this.signDictionary["HELLO"];
+
+      return {
+        landmarks: this.smoothedLandmarks,
+        boundingBox: d.boundingBox || { x: width / 2 - 80, y: height / 2 - 80, width: 160, height: 160 },
+        gesture: d.gesture || `${activeSign.symbol} ${activeSign.signName}`,
+        signMeaning: activeSign,
+        confidence: d.confidence || (activeSign.confidence || 0.95),
+        handedness: d.handedness || "Right",
+        allHands: d.allHands && d.allHands.length > 0 ? d.allHands : [{
+          landmarks: this.smoothedLandmarks,
+          handedness: d.handedness || "Right",
+          confidence: d.confidence || 0.95
+        }],
+        fps: Math.min(60, Math.max(24, this.fps)),
+        isRealHandDetected: hasRealHand,
+        holdProgress: d.holdProgress || 0,
+        isCommitted: !!d.isCommitted,
+        fingerPose: { ...this.smoothedPose },
+        autoCentering: {
+          enabled: this.autoCenterEnabled,
+          isTracking: hasRealHand && this.autoCenterEnabled,
+          currentZoom: +this.zoomLevel.toFixed(2),
+          panOffsetX: +this.panOffsetX.toFixed(2),
+          panOffsetY: +this.panOffsetY.toFixed(2),
+          handFramedScore: hasRealHand ? 95 : 20,
+          statusText: hasRealHand ? "Worker Vision Active (Lag-Free)" : "Searching..."
+        },
+        physicsTelemetry: { ...this.physicsTelemetry },
+        aiStreamTelemetry: this.getAIStreamTelemetry(),
+        workerTelemetry: {
+          workerActive: true,
+          backend: this.workerBackend || "MediaPipe Vision (Web Worker)",
+          isWorkerBusy: this.isWorkerBusy,
+          inferenceMs: d.inferenceMs || 8
+        }
+      };
+    }
+
+    // 3. Fallback: Main thread inference ONLY if Web Worker is unavailable
+    if (!this.workerReady && this.videoElement && this.videoElement.readyState >= 2) {
       try {
         const isMirrored = this.isMirrored !== false;
         const mpResult = mediaPipeTracker.processVideoFrame(this.videoElement, width, height, timestamp, forceDetection, isMirrored);
@@ -1202,14 +1387,17 @@ class RealtimeHandTracker {
         this.smoothedLandmarks = rawKinematicTargets;
       } else {
         const alpha = hasRealHand ? 0.7 : 0.55;
-        this.smoothedLandmarks = rawKinematicTargets.map((pt, i) => {
-          const prev = this.smoothedLandmarks[i] || pt;
-          return {
-            x: prev.x + alpha * (pt.x - prev.x),
-            y: prev.y + alpha * (pt.y - prev.y),
-            z: pt.z
-          };
-        });
+        if (this.smoothedLandmarks.length !== rawKinematicTargets.length) {
+          this.smoothedLandmarks = rawKinematicTargets.map((pt) => ({ x: pt.x, y: pt.y, z: pt.z || 0 }));
+        } else {
+          for (let i = 0; i < rawKinematicTargets.length; i++) {
+            const pt = rawKinematicTargets[i];
+            const prev = this.smoothedLandmarks[i];
+            prev.x += alpha * (pt.x - prev.x);
+            prev.y += alpha * (pt.y - prev.y);
+            prev.z = (pt.z || 0);
+          }
+        }
       }
       simulatedLandmarks = this.smoothedLandmarks;
     }
@@ -1838,15 +2026,16 @@ class RealtimeHandTracker {
         const hLandmarks = handItem.landmarks;
         if (!hLandmarks || hLandmarks.length < 21) return;
 
-        const safePts = hLandmarks.map((pt, idx) => {
+        const safePts = this._safePtsBuffer;
+        for (let idx = 0; idx < 21; idx++) {
+          const pt = hLandmarks[idx];
           const fallbackX = 640 + (idx - 10) * 8;
           const fallbackY = 360 + (idx % 4) * 12;
-          return {
-            x: Number.isFinite(pt?.x) ? pt.x : fallbackX,
-            y: Number.isFinite(pt?.y) ? pt.y : fallbackY,
-            z: Number.isFinite(pt?.z) ? pt.z || 0 : 0
-          };
-        });
+          const node = safePts[idx];
+          node.x = (pt && Number.isFinite(pt.x)) ? pt.x : fallbackX;
+          node.y = (pt && Number.isFinite(pt.y)) ? pt.y : fallbackY;
+          node.z = (pt && Number.isFinite(pt.z)) ? pt.z : 0;
+        }
 
         const handLabel = handItem.handedness || (hIdx === 0 ? "Right" : "Left");
         const handConf = handItem.confidence || confidence || 0.95;

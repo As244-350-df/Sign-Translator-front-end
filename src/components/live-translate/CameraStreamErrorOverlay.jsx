@@ -36,23 +36,15 @@ export const CameraStreamErrorOverlay = ({
 
         <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 mb-2">
           <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-          <span>
-            {cameraStreamStatus === "requesting_permission"
-              ? "Awaiting Camera Permission..."
-              : "Connecting Camera to AI Engine..."}
-          </span>
+          <span>Connecting Camera to AI Engine...</span>
         </div>
 
         <h4 className="text-base font-bold text-white mb-1.5 max-w-sm">
-          {cameraStreamStatus === "requesting_permission"
-            ? 'Please click "Allow" in your browser prompt'
-            : "Connecting video hardware to Gemini AI Stream engine..."}
+          Connecting video hardware to Gemini AI Stream engine...
         </h4>
 
         <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">
-          {cameraStreamStatus === "requesting_permission"
-            ? "Your browser may show a permission dialog near the address bar. Grant access to begin real-time sign recognition."
-            : "Initializing video frames, frame buffers, and neural hand landmark detection pipeline."}
+          Initializing video frames, frame buffers, and neural hand landmark detection pipeline.
         </p>
 
         <div className="flex flex-wrap items-center justify-center gap-2">

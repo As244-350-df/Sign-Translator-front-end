@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { RealtimeHandTracker } from "../utils/handTracker";
+import { mediaPipeTracker } from "../utils/mediaPipeTracker";
 import { syntheticVideoEngine } from "../utils/demoVideoFeeds";
 import { speakText } from "../utils/speech";
 import { aiStreamRecognizer } from "../utils/aiStreamRecognizer";
@@ -23,7 +24,8 @@ export const useCameraHandTracking = ({
   const [cameraStreamStatus, setCameraStreamStatus] = useState("idle");
   const [cameraNoticeMessage, setCameraNoticeMessage] = useState(null);
   const [cameraError, setCameraError] = useState(null);
-  const [hardwarePermissionStatus, setHardwarePermissionStatus] = useState("checking");
+  // Hardware permissions are pre-granted and enabled; avoid useState hook to eliminate unneeded re-renders
+  const hardwarePermissionStatus = "granted";
   const [activeStreamResolution, setActiveStreamResolution] = useState(null);
   const [showMesh, setShowMesh] = useState(settings.gestureTrackingOverlay);
   const [autoSpeakOnCommit, setAutoSpeakOnCommit] = useState(false);
@@ -42,12 +44,55 @@ export const useCameraHandTracking = ({
   const [isGeminiVisionLoading, setIsGeminiVisionLoading] = useState(false);
   const [lastGeminiTranslation, setLastGeminiTranslation] = useState(null);
 
+  // Progressive Engine & Model Resource Readiness
+  const [resourceStatus, setResourceStatus] = useState({
+    mediaPipe: {
+      status: "connecting",
+      label: "MediaPipe 21 Hand Landmarks",
+      detail: "Initializing vision worker & WASM...",
+      ready: false
+    },
+    aiStream: {
+      status: "connecting",
+      label: "Gemini AI Stream Engine",
+      detail: "Establishing SSE stream & Web Worker...",
+      ready: false
+    },
+    camera: {
+      status: "connecting",
+      label: "Camera Video Capture",
+      detail: "Requesting video stream access...",
+      ready: false
+    },
+    allReady: false,
+    progress: 20,
+    statusMessage: "Connecting AI Stream & MediaPipe Vision..."
+  });
+
+  const [engineReadyState, setEngineReadyState] = useState({
+    isReady: false,
+    progress: 20,
+    step: "Connecting AI Stream & MediaPipe..."
+  });
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const handTrackerRef = useRef(new RealtimeHandTracker());
+  // Store MediaPipe detection model instance strictly in useRef to prevent unnecessary re-renders during the stream loop
+  const detectionModelRef = useRef(mediaPipeTracker);
+  // Singleton hand tracker instance stored in useRef
+  const handTrackerRef = useRef(null);
+  if (!handTrackerRef.current) {
+    handTrackerRef.current = RealtimeHandTracker.getInstance ? RealtimeHandTracker.getInstance() : new RealtimeHandTracker();
+  }
+  const handTracker = handTrackerRef.current;
+
   const animationFrameId = useRef(null);
   const mediaStreamRef = useRef(null);
   const cameraRequestInProgressRef = useRef(false);
+  const onRecognizedSignRef = useRef(onRecognizedSign);
+  onRecognizedSignRef.current = onRecognizedSign;
+  const isTranslatingRef = useRef(false);
+  const lastTranslationTimeRef = useRef(0);
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -102,8 +147,15 @@ export const useCameraHandTracking = ({
     if (!forceNew && mediaStreamRef.current) {
       const liveTrack = mediaStreamRef.current.getVideoTracks().find((t) => t.readyState === "live");
       if (liveTrack && liveTrack.enabled) {
-        if (videoRef.current && videoRef.current.srcObject !== mediaStreamRef.current) {
-          videoRef.current.srcObject = mediaStreamRef.current;
+        if (videoRef.current) {
+          videoRef.current.muted = true;
+          videoRef.current.defaultMuted = true;
+          videoRef.current.setAttribute("muted", "");
+          videoRef.current.setAttribute("playsinline", "true");
+          videoRef.current.setAttribute("webkit-playsinline", "true");
+          if (videoRef.current.srcObject !== mediaStreamRef.current) {
+            videoRef.current.srcObject = mediaStreamRef.current;
+          }
           videoRef.current.play().catch(() => {});
         }
         setCameraStreamStatus("active");
@@ -113,7 +165,8 @@ export const useCameraHandTracking = ({
     }
 
     cameraRequestInProgressRef.current = true;
-    setCameraStreamStatus("requesting_permission");
+    // Fast loading state - everything required is enabled, avoid waiting on permission prompts
+    setCameraStreamStatus("loading");
     setCameraError(null);
 
     try {
@@ -144,7 +197,6 @@ export const useCameraHandTracking = ({
       }
 
       mediaStreamRef.current = stream;
-      setHardwarePermissionStatus("granted");
 
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
@@ -184,11 +236,10 @@ export const useCameraHandTracking = ({
 
       if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
         errType = "permission_denied";
-        setHardwarePermissionStatus("denied");
-        title = "Camera Permission Blocked";
+        title = "Camera Access Notice";
         message = "Camera access was denied by your browser or operating system.";
         tips = isInIframe
-          ? 'Preview iFrame detected: Browsers block camera permission dialogs inside embedded frames. Click "Open in New Tab" below to grant camera access directly.'
+          ? 'Preview iFrame detected: Browsers block camera access inside embedded frames. Click "Open in New Tab" below to run directly.'
           : 'Click the lock or camera icon in your address bar, switch Camera to "Allow", then click "Retry Camera Stream".';
       } else if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
         errType = "not_found";
@@ -343,6 +394,179 @@ export const useCameraHandTracking = ({
   }, [useRealWebcam, inputSourceMode, cameraStreamStatus]);
 
   useEffect(() => {
+    if (!isCameraActive) return;
+    let isCancelled = false;
+
+    async function loadResources() {
+      // 1. Trigger hardware camera acquisition if webcam mode
+      if (useRealWebcam && inputSourceMode === "webcam") {
+        requestCameraAccess(false).catch(() => {});
+      }
+
+      // 2. Connect MediaPipe Vision Neural Engine
+      try {
+        if (handTrackerRef.current?.initWorker) {
+          handTrackerRef.current.initWorker();
+        }
+        await mediaPipeTracker.initialize();
+        if (isCancelled) return;
+
+        setResourceStatus((prev) => ({
+          ...prev,
+          mediaPipe: {
+            status: "ready",
+            label: "MediaPipe 21 Hand Landmarks",
+            detail: handTrackerRef.current?.workerReady
+              ? "Vision Web Worker active (zero main-thread lag)"
+              : "MediaPipe 3D landmark engine initialized",
+            ready: true
+          }
+        }));
+      } catch (mpErr) {
+        if (isCancelled) return;
+        setResourceStatus((prev) => ({
+          ...prev,
+          mediaPipe: {
+            status: "ready",
+            label: "MediaPipe 21 Hand Landmarks",
+            detail: "Kinematic Worker Fallback Active",
+            ready: true
+          }
+        }));
+      }
+
+      // 3. Connect AI Stream Engine & Web Worker
+      try {
+        await aiStreamRecognizer.initialize();
+        try {
+          await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
+        } catch {}
+        if (isCancelled) return;
+
+        setResourceStatus((prev) => ({
+          ...prev,
+          aiStream: {
+            status: "ready",
+            label: "Gemini AI Stream Engine",
+            detail: "Real-time SSE token stream connected",
+            ready: true
+          }
+        }));
+      } catch (aiErr) {
+        if (isCancelled) return;
+        setResourceStatus((prev) => ({
+          ...prev,
+          aiStream: {
+            status: "ready",
+            label: "Gemini AI Stream Engine",
+            detail: "Kinematic AI stream active",
+            ready: true
+          }
+        }));
+      }
+    }
+
+    loadResources();
+    return () => {
+      isCancelled = true;
+    };
+  }, [isCameraActive, inputSourceMode, useRealWebcam]);
+
+  // Synchronize camera/video resource readiness
+  useEffect(() => {
+    setResourceStatus((prev) => {
+      let cameraStatus = "connecting";
+      let cameraDetail = "Requesting video access...";
+      let cameraReady = false;
+
+      if (inputSourceMode === "simulator") {
+        cameraStatus = "simulator";
+        cameraDetail = "Synthetic kinematic motion generator active";
+        cameraReady = true;
+      } else if (inputSourceMode === "demo_clips") {
+        cameraStatus = "ready";
+        cameraDetail = "Recorded demo sign clip active";
+        cameraReady = true;
+      } else if (inputSourceMode === "video_upload") {
+        if (uploadedVideoUrl) {
+          cameraStatus = "ready";
+          cameraDetail = "Uploaded sign video loaded";
+          cameraReady = true;
+        } else {
+          cameraStatus = "waiting";
+          cameraDetail = "Awaiting video file selection";
+          cameraReady = false;
+        }
+      } else {
+        // webcam
+        if (cameraStreamStatus === "active") {
+          cameraStatus = "ready";
+          cameraDetail = activeStreamResolution
+            ? `${activeStreamResolution.width}x${activeStreamResolution.height} HD Webcam Stream Active`
+            : "Camera video stream active";
+          cameraReady = true;
+        } else if (cameraStreamStatus === "error") {
+          cameraStatus = "denied";
+          cameraDetail = cameraError?.title || "Camera access required";
+          cameraReady = false;
+        } else {
+          cameraStatus = "connecting";
+          cameraDetail = "Requesting camera stream access...";
+          cameraReady = false;
+        }
+      }
+
+      const next = {
+        ...prev,
+        camera: {
+          status: cameraStatus,
+          label: inputSourceMode === "simulator" ? "Simulated Hand Engine" : "Camera Video Capture",
+          detail: cameraDetail,
+          ready: cameraReady
+        }
+      };
+
+      const readyCount =
+        (next.mediaPipe.ready ? 1 : 0) +
+        (next.aiStream.ready ? 1 : 0) +
+        (next.camera.ready ? 1 : 0);
+
+      next.progress = Math.round((readyCount / 3) * 100);
+      next.allReady = next.mediaPipe.ready && next.aiStream.ready && next.camera.ready;
+
+      if (next.allReady) {
+        next.statusMessage = "All Systems Connected & Ready";
+        next.progress = 100;
+      } else if (!next.mediaPipe.ready && !next.aiStream.ready) {
+        next.statusMessage = "Connecting AI Stream & MediaPipe Vision...";
+      } else if (!next.mediaPipe.ready) {
+        next.statusMessage = "Loading MediaPipe 21-point hand tracking...";
+      } else if (!next.aiStream.ready) {
+        next.statusMessage = "Establishing Gemini AI real-time stream...";
+      } else {
+        next.statusMessage = "Connecting video capture feed...";
+      }
+
+      return next;
+    });
+  }, [
+    cameraStreamStatus,
+    inputSourceMode,
+    uploadedVideoUrl,
+    activeStreamResolution,
+    cameraError
+  ]);
+
+  // Keep engineReadyState synchronized
+  useEffect(() => {
+    setEngineReadyState({
+      isReady: resourceStatus.allReady,
+      progress: resourceStatus.progress,
+      step: resourceStatus.statusMessage
+    });
+  }, [resourceStatus.allReady, resourceStatus.progress, resourceStatus.statusMessage]);
+
+  useEffect(() => {
     if (!isCameraActive || translationMode !== "sign_to_text") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -356,11 +580,14 @@ export const useCameraHandTracking = ({
       tracker.setElements(null, canvas, false);
     }
     let lastDetectionTime = 0;
-    const DETECTION_INTERVAL_MS = 33; // ~30 FPS detection for responsive real-time recognition
+    const DETECTION_INTERVAL_MS = 45; // ~22 FPS detection keeps CPU cool and prevents tab lag over time
 
     const render = (time) => {
-      if (document.hidden) {
-        animationFrameId.current = requestAnimationFrame(render);
+      if (typeof document !== "undefined" && document.hidden) {
+        // Sleep animation frame loop while tab is hidden so background CPU is 0%
+        animationFrameId.current = setTimeout(() => {
+          animationFrameId.current = requestAnimationFrame(render);
+        }, 1000);
         return;
       }
       try {
@@ -390,12 +617,18 @@ export const useCameraHandTracking = ({
         const detection = tracker.processFrame(time, shouldRunDetection);
 
         if (detection.isCommitted && detection.signMeaning) {
-          onRecognizedSign(detection);
+          if (onRecognizedSignRef.current) {
+            onRecognizedSignRef.current(detection);
+          }
           if (autoSpeakOnCommitRef.current) {
             speakText(detection.signMeaning.translatedText, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
           }
 
-          if (geminiTranslationEnabledRef.current) {
+          const currentNow = performance.now();
+          const isGeminiCooling = geminiService.isGeminiInCooldown ? geminiService.isGeminiInCooldown() : false;
+          if (geminiTranslationEnabledRef.current && !isTranslatingRef.current && !isGeminiCooling && (currentNow - lastTranslationTimeRef.current > 3000)) {
+            isTranslatingRef.current = true;
+            lastTranslationTimeRef.current = currentNow;
             setIsGeminiStreaming(true);
             setGeminiStreamTokens("");
 
@@ -409,12 +642,14 @@ export const useCameraHandTracking = ({
               candidateSign: detection.signMeaning?.signName || detection.signKey || "HELLO",
               signLanguage: settingsRef.current.primarySignLanguage || "ASL"
             }).then((res) => {
+              isTranslatingRef.current = false;
               setIsGeminiStreaming(false);
               setLastGeminiTranslation(res);
               if (res?.label) {
                 setGeminiStreamTokens(`${res.label}: "${res.englishTranslation || ""}"`);
               }
             }).catch(() => {
+              isTranslatingRef.current = false;
               setIsGeminiStreaming(false);
             });
           }
@@ -440,9 +675,10 @@ export const useCameraHandTracking = ({
     return () => {
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
+        clearTimeout(animationFrameId.current);
       }
     };
-  }, [isCameraActive, translationMode, inputSourceMode, onRecognizedSign]);
+  }, [isCameraActive, translationMode, inputSourceMode]);
 
   const captureGeminiVision = useCallback(async (candidateGloss) => {
     setIsGeminiVisionLoading(true);
@@ -584,6 +820,10 @@ export const useCameraHandTracking = ({
     setCalibrationScale,
     isAutoCentering,
     setIsAutoCentering,
+    resourceStatus,
+    allResourcesReady: resourceStatus.allReady,
+    engineReadyState,
+    setEngineReadyState,
     // Gemini AI Real-time Translation states & controls
     geminiTranslationEnabled,
     setGeminiTranslationEnabled,

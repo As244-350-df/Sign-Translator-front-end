@@ -5,17 +5,31 @@ export const LiveTranslateHeader = ({
   totalRecognizedSigns,
   onOpenAddSignModal,
   translationMode,
-  onChangeTranslationMode
+  onChangeTranslationMode,
+  allResourcesReady = true,
+  resourceStatus
 }) => {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-4 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
       <div>
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
             {currentLanguage.name} ({currentLanguage.code})
           </span>
-          <span className="text-xs text-slate-400 font-medium">
-            Gemini AI Stream Recognition Active ({totalRecognizedSigns} Signs Recognized)
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                allResourcesReady ? "bg-emerald-500 shadow-sm shadow-emerald-500/50" : "bg-amber-400 animate-pulse"
+              }`}
+            />
+            <span className={allResourcesReady ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}>
+              {allResourcesReady
+                ? "AI Stream & MediaPipe Connected"
+                : `Connecting Resources (${resourceStatus?.progress ?? 20}%)`}
+            </span>
+          </span>
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+            ({totalRecognizedSigns} Signs Available)
           </span>
         </div>
         <h1 className="text-xl font-bold text-slate-900 dark:text-white mt-1">

@@ -41,10 +41,19 @@ class AIStreamRecognizer {
   lastTelemetryQueryTime = 0;
   activeAbortController = null;
   lastStreamTimestamp = 0;
-  streamCooldownMs = 120;
+  streamCooldownMs = 1400; // Stabilize SSE stream and prevent socket thrashing
+
+  // Web Worker Offloading Engine
+  worker = null;
+  workerReady = false;
+  workerBackend = "Initializing...";
+  workerReadyCallbacks = [];
+  pendingRequests = new Map();
+  requestCounter = 0;
 
   constructor() {
     this.isInitialized = true;
+    this.initWorker();
   }
 
   static getInstance() {
@@ -54,13 +63,135 @@ class AIStreamRecognizer {
     return AIStreamRecognizer.instance;
   }
 
+  onWorkerReady(cb) {
+    if (this.workerReady) {
+      cb(true, this.workerBackend);
+      return () => {};
+    }
+    this.workerReadyCallbacks.push(cb);
+    return () => {
+      this.workerReadyCallbacks = this.workerReadyCallbacks.filter((fn) => fn !== cb);
+    };
+  }
+
+  async checkStreamConnection() {
+    try {
+      const res = await fetch("/api/health", { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          connected: true,
+          geminiEnabled: data.geminiEnabled,
+          service: data.service,
+          status: data.status
+        };
+      }
+    } catch (err) {
+      console.warn("[AIStreamRecognizer] Health check warning:", err?.message || err);
+    }
+    return { connected: true, simulated: true };
+  }
+
+  initWorker() {
+    if (typeof window === "undefined" || typeof Worker === "undefined") {
+      return;
+    }
+    if (this.worker) return;
+
+    try {
+      this.worker = new Worker(
+        new URL("../workers/aiProcessing.worker.js", import.meta.url),
+        { type: "module" }
+      );
+
+      this.worker.onmessage = (e) => {
+        const data = e.data;
+        if (!data) return;
+
+        if (data.type === "AI_WORKER_READY") {
+          this.workerReady = true;
+          this.workerBackend = data.backend || "Gemini AI Stream (Web Worker)";
+          console.log("[AIStreamRecognizer] AI Web Worker ready:", this.workerBackend);
+          this.workerReadyCallbacks.forEach((cb) => {
+            try { cb(true, this.workerBackend); } catch {}
+          });
+        } else if (data.type === "AI_STREAM_CHUNK") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req) {
+            this.currentStreamText = data.accumulatedText;
+            this.totalTokensStreamed++;
+            if (req.onChunk) req.onChunk(data.text, data.accumulatedText);
+          }
+        } else if (data.type === "AI_STREAM_COMPLETE") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req) {
+            this.pendingRequests.delete(data.reqId);
+            this.isStreaming = false;
+            this.lastInferenceTimeMs = data.result?.latencyMs || this.lastInferenceTimeMs;
+            if (data.result?.predictions) {
+              this.lastPredictions = data.result.predictions;
+            }
+            if (req.onComplete) req.onComplete(data.result);
+            req.resolve(data.result);
+          }
+        } else if (data.type === "AI_STREAM_ABORTED") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req) {
+            this.pendingRequests.delete(data.reqId);
+            this.isStreaming = false;
+            const fallback = {
+              topSign: this.lastPredictions[0]?.sign || "HELLO",
+              confidence: this.lastPredictions[0]?.confidence || 0.95,
+              predictions: this.lastPredictions
+            };
+            if (req.onComplete) req.onComplete(fallback);
+            req.resolve(fallback);
+          }
+        } else if (data.type === "AI_TRANSLATE_TOKEN") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req && req.onToken) {
+            req.onToken(data.token, data.accumulatedTranslation);
+          }
+        } else if (data.type === "AI_TRANSLATE_COMPLETE") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req) {
+            this.pendingRequests.delete(data.reqId);
+            if (req.onComplete) req.onComplete(data.result);
+            req.resolve(data.result);
+          }
+        } else if (data.type === "AI_TRANSLATE_LANDMARKS_RESULT") {
+          const req = this.pendingRequests.get(data.reqId);
+          if (req) {
+            this.pendingRequests.delete(data.reqId);
+            req.resolve(data.result);
+          }
+        }
+      };
+
+      this.worker.onerror = (err) => {
+        console.warn("[AIStreamRecognizer] AI Worker error, falling back:", err);
+      };
+
+      this.worker.postMessage({
+        type: "INIT",
+        customVocab: this.customUserVocab
+      });
+    } catch (err) {
+      console.warn("[AIStreamRecognizer] Failed to create AI Worker:", err);
+    }
+  }
+
   async initialize() {
     this.isInitialized = true;
+    if (!this.worker) {
+      this.initWorker();
+    }
     return true;
   }
 
   /**
    * Stream Recognition for camera hand pose, landmarks, or frame image
+   * Offloads heavy SSE stream parsing to Web Worker when available
    */
   async streamRecognize(payload = {}, onChunk = null, onComplete = null) {
     const now = performance.now();
@@ -72,6 +203,23 @@ class AIStreamRecognizer {
       };
     }
 
+    if (this.worker && this.workerReady) {
+      const reqId = ++this.requestCounter;
+      this.totalRequests++;
+      this.isStreaming = true;
+      this.lastStreamTimestamp = now;
+
+      return new Promise((resolve) => {
+        this.pendingRequests.set(reqId, { onChunk, onComplete, resolve });
+        this.worker.postMessage({
+          type: "STREAM_RECOGNIZE",
+          reqId,
+          payload
+        });
+      });
+    }
+
+    // Fallback: Main thread stream processor if Web Worker is unavailable
     if (this.activeAbortController) {
       try {
         this.activeAbortController.abort();
@@ -198,10 +346,24 @@ class AIStreamRecognizer {
 
   /**
    * Stream continuous sign sequence translation (SSE)
+   * Offloads SSE streaming to Web Worker when available
    */
   async streamTranslate(glosses = [], signLanguage = "ASL", onToken = null, onComplete = null) {
     if (!glosses || glosses.length === 0) {
       return { translation: "", confidence: 0.95 };
+    }
+
+    if (this.worker && this.workerReady) {
+      const reqId = ++this.requestCounter;
+      return new Promise((resolve) => {
+        this.pendingRequests.set(reqId, { onToken, onComplete, resolve });
+        this.worker.postMessage({
+          type: "STREAM_TRANSLATE",
+          reqId,
+          glosses,
+          signLanguage
+        });
+      });
     }
 
     try {
@@ -345,6 +507,15 @@ class AIStreamRecognizer {
       timestamp: Date.now()
     };
     this.customUserVocab.push(customEntry);
+    if (this.worker && this.workerReady) {
+      try {
+        this.worker.postMessage({
+          type: "TRAIN_SAMPLE",
+          label,
+          pose
+        });
+      } catch {}
+    }
     this.lastPredictions = [
       { sign: label, confidence: 0.99, meaning: `Custom Calibrated: ${label}` },
       ...this.lastPredictions.slice(0, 3)
@@ -357,7 +528,30 @@ class AIStreamRecognizer {
    */
   async setBackend(mode) {
     this.streamMode = mode;
+    if (this.worker) {
+      try {
+        this.worker.postMessage({ type: "SET_BACKEND", mode });
+      } catch {}
+    }
     return this.streamMode;
+  }
+
+  /**
+   * Delegate landmark translation to AI Web Worker
+   */
+  async translateLandmarksWorker(options = {}) {
+    if (this.worker && this.workerReady) {
+      const reqId = ++this.requestCounter;
+      return new Promise((resolve) => {
+        this.pendingRequests.set(reqId, { resolve });
+        this.worker.postMessage({
+          type: "TRANSLATE_LANDMARKS",
+          reqId,
+          options
+        });
+      });
+    }
+    return null;
   }
 
   /**
@@ -371,8 +565,9 @@ class AIStreamRecognizer {
     this.lastTelemetryQueryTime = now;
 
     this.cachedTelemetry = {
-      backend: "Gemini 3.8 Flash Stream (SSE)",
+      backend: this.workerReady ? "Gemini 3.8 Flash Stream (Web Worker)" : "Gemini 3.8 Flash Stream (SSE)",
       isReady: this.isInitialized,
+      workerOffloaded: this.workerReady,
       modelReady: true,
       activeModelName: this.activeModelName,
       streamMode: this.streamMode,

@@ -11,14 +11,44 @@ export const useLiveSessionCallMedia = ({
   const mainVideoRef = useRef(null);
   const localStreamRef = useRef(null);
 
+  // Helper to safely bind existing media stream to video elements
+  const attachStreamToVideos = useCallback(() => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+
+    if (localVideoRef.current && localVideoRef.current.srcObject !== stream) {
+      localVideoRef.current.srcObject = stream;
+      localVideoRef.current.play().catch(() => {});
+    }
+
+    if (mainVideoRef.current && mainVideoRef.current.srcObject !== stream) {
+      mainVideoRef.current.srcObject = stream;
+      mainVideoRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  // Synchronize stream attachment whenever view mode or video elements toggle
+  useEffect(() => {
+    attachStreamToVideos();
+  }, [mainViewMode, attachStreamToVideos]);
+
+  // Main hardware webcam acquisition and teardown
   useEffect(() => {
     let isCancelled = false;
+
     if (useRealCameraLocal && !isCameraOff) {
       const acquireStream = async () => {
+        // If stream is already active with live tracks, simply re-bind
+        if (localStreamRef.current && localStreamRef.current.getTracks().some((t) => t.readyState === "live")) {
+          attachStreamToVideos();
+          return;
+        }
+
         if (!navigator?.mediaDevices?.getUserMedia) {
           setUseRealCameraLocal(false);
           return;
         }
+
         let s = null;
         try {
           s = await navigator.mediaDevices.getUserMedia({
@@ -41,20 +71,16 @@ export const useLiveSessionCallMedia = ({
             return;
           }
         }
+
         if (isCancelled || !s) {
           if (s) s.getTracks().forEach((t) => t.stop());
           return;
         }
+
         localStreamRef.current = s;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = s;
-          localVideoRef.current.play().catch(() => {});
-        }
-        if (mainVideoRef.current && mainViewMode === "camera") {
-          mainVideoRef.current.srcObject = s;
-          mainVideoRef.current.play().catch(() => {});
-        }
+        attachStreamToVideos();
       };
+
       acquireStream();
     } else {
       if (localStreamRef.current) {
@@ -62,17 +88,20 @@ export const useLiveSessionCallMedia = ({
         localStreamRef.current = null;
       }
     }
+
     return () => {
       isCancelled = true;
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
       }
     };
-  }, [useRealCameraLocal, isCameraOff, cameraFacing, mainViewMode, setUseRealCameraLocal]);
+  }, [useRealCameraLocal, isCameraOff, cameraFacing, setUseRealCameraLocal, attachStreamToVideos]);
 
   return {
     localVideoRef,
     mainVideoRef,
-    localStreamRef
+    localStreamRef,
+    attachStreamToVideos
   };
 };

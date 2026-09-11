@@ -11,7 +11,10 @@ export const LiveSessionStageOverlay = ({
   captionSpeaking,
   onSpeakCurrentCaption,
   currentCaption,
-  fontSize
+  fontSize,
+  geminiTranslation = null,
+  isGeminiLoading = false,
+  onTriggerGeminiTranslate = null
 }) => {
   return (
     <>
@@ -46,6 +49,9 @@ export const LiveSessionStageOverlay = ({
           tracker={handTracker}
           onCommitSign={onCommitSign}
           onOpenSignDeck={onOpenSignDeck}
+          geminiTranslation={geminiTranslation}
+          isGeminiLoading={isGeminiLoading}
+          onTriggerGeminiTranslate={onTriggerGeminiTranslate}
         />
 
         <div className="w-full max-w-3xl bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl p-4 shadow-2xl text-center relative group">

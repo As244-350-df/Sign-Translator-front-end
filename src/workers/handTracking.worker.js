@@ -104,23 +104,46 @@ async function initMediaPipeVision() {
   if (handLandmarker || isInitializingLandmarker) return;
   isInitializingLandmarker = true;
   try {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
-    );
+    let vision = null;
+    try {
+      vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
+    } catch {
+      vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
+      );
+    }
+
+    try {
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "/mediapipe/hand_landmarker.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2,
+        minHandDetectionConfidence: 0.55,
+        minHandPresenceConfidence: 0.55,
+        minTrackingConfidence: 0.55
+      });
+      self.postMessage({ type: "WORKER_READY", backend: "MediaPipe GPU (Web Worker)" });
+      return;
+    } catch (gpuErr) {
+      console.warn("[HandWorker] GPU delegate fallback to CPU:", gpuErr?.message);
+    }
+
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-        delegate: "GPU"
+        modelAssetPath: "/mediapipe/hand_landmarker.task",
+        delegate: "CPU"
       },
       runningMode: "VIDEO",
-      numHands: 1,
-      minHandDetectionConfidence: 0.55,
-      minHandPresenceConfidence: 0.55,
-      minTrackingConfidence: 0.55
+      numHands: 2,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
-    self.postMessage({ type: "WORKER_READY", backend: "MediaPipe GPU" });
+    self.postMessage({ type: "WORKER_READY", backend: "MediaPipe CPU (Web Worker)" });
   } catch (err) {
-    // Fallback to CPU delegate if GPU delegate fails in worker
     try {
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
@@ -131,14 +154,14 @@ async function initMediaPipeVision() {
           delegate: "CPU"
         },
         runningMode: "VIDEO",
-        numHands: 1,
+        numHands: 2,
         minHandDetectionConfidence: 0.5,
         minHandPresenceConfidence: 0.5,
         minTrackingConfidence: 0.5
       });
-      self.postMessage({ type: "WORKER_READY", backend: "MediaPipe CPU (Worker)" });
+      self.postMessage({ type: "WORKER_READY", backend: "MediaPipe CDN (Web Worker)" });
     } catch (fallbackErr) {
-      self.postMessage({ type: "WORKER_READY", backend: "Algorithmic Simulator" });
+      self.postMessage({ type: "WORKER_READY", backend: "Algorithmic Simulator (Web Worker)" });
     }
   } finally {
     isInitializingLandmarker = false;
@@ -425,7 +448,7 @@ function generateSyntheticLandmarks(cx, cy, span, pose, tiltDeg = 0) {
 }
 
 // Process single frame in worker
-function processFrameInWorker(bitmap, timestamp, width, height, forceDetection) {
+function processFrameInWorker(bitmap, timestamp, width, height, forceDetection, isMirrored = true) {
   const now = performance.now();
   const delta = now - lastFrameTime;
   lastFrameTime = now;
@@ -438,10 +461,13 @@ function processFrameInWorker(bitmap, timestamp, width, height, forceDetection) 
   let detectedSpread = 0.45;
   let detectedTilt = 0;
   let realLandmarks = [];
+  let detectedAllHands = [];
+  let detectedHandedness = "Right";
+  let detectedConfidence = 0.95;
 
   if (bitmap && handLandmarker) {
     try {
-      const safeTimestamp = Math.max(now, lastMediaPipeTimestamp + 4);
+      const safeTimestamp = Math.max(Math.round(now), Math.round(lastMediaPipeTimestamp + 4));
       lastMediaPipeTimestamp = safeTimestamp;
 
       // Downsample using OffscreenCanvas if available
@@ -461,14 +487,27 @@ function processFrameInWorker(bitmap, timestamp, width, height, forceDetection) 
 
       if (result && result.landmarks && result.landmarks.length > 0) {
         hasRealHand = true;
-        const rawPts = result.landmarks[0];
-        lastHandSeenTime = now;
+        const flipX = isMirrored !== false;
 
-        realLandmarks = rawPts.map((pt) => ({
-          x: (1 - pt.x) * width,
-          y: pt.y * height,
-          z: (pt.z || 0) * width
-        }));
+        detectedAllHands = result.landmarks.map((rawHandPts, hIdx) => {
+          const handedness = result.handednesses?.[hIdx]?.[0]?.categoryName || (hIdx === 0 ? "Right" : "Left");
+          const score = result.handednesses?.[hIdx]?.[0]?.score || 0.95;
+          return {
+            landmarks: rawHandPts.map((pt) => ({
+              x: flipX ? (1 - pt.x) * width : pt.x * width,
+              y: pt.y * height,
+              z: (pt.z || 0) * width
+            })),
+            handedness,
+            confidence: score
+          };
+        });
+
+        const primaryHand = detectedAllHands[0];
+        realLandmarks = primaryHand.landmarks;
+        detectedHandedness = primaryHand.handedness;
+        detectedConfidence = primaryHand.confidence;
+        lastHandSeenTime = now;
 
         const flex = computeFingerFlexions(realLandmarks);
         detectedFingers = {
@@ -631,8 +670,13 @@ function processFrameInWorker(bitmap, timestamp, width, height, forceDetection) 
       height: bMaxY - bMinY + pad * 2
     },
     gesture: `${activeSign.symbol} ${activeSign.signName}`,
-    confidence: activeSign.confidence || 0.96,
-    handedness: "Right",
+    confidence: hasRealHand ? detectedConfidence : (activeSign.confidence || 0.96),
+    handedness: detectedHandedness || "Right",
+    allHands: detectedAllHands && detectedAllHands.length > 0 ? detectedAllHands : [{
+      landmarks: finalLandmarks,
+      handedness: detectedHandedness || "Right",
+      confidence: hasRealHand ? detectedConfidence : 0.96
+    }],
     pose: { ...smoothedPose },
     isRealHandDetected: hasRealHand,
     currentSignKey,
@@ -665,8 +709,8 @@ self.onmessage = async (e) => {
     }
 
     case "PROCESS_FRAME": {
-      const { bitmap, timestamp, width, height, forceDetection, frameId } = data;
-      const detection = processFrameInWorker(bitmap, timestamp || performance.now(), width || 1280, height || 720, forceDetection);
+      const { bitmap, timestamp, width, height, forceDetection, frameId, isMirrored } = data;
+      const detection = processFrameInWorker(bitmap, timestamp || performance.now(), width || 1280, height || 720, forceDetection, isMirrored);
       self.postMessage({
         type: "DETECTION_RESULT",
         detection,

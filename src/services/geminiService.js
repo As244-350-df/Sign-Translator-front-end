@@ -4,6 +4,8 @@
  * spatial hand poses, and dual-hand geometry to generate accurate sign language translation labels.
  */
 
+import { aiStreamRecognizer } from "../utils/aiStreamRecognizer";
+
 const API_BASE = "/api/gemini";
 const AI_BASE = "/api/ai";
 
@@ -88,6 +90,63 @@ class GeminiService {
     this.cacheLimit = 50;
     this.lastRequestTime = 0;
     this.minIntervalMs = 250; // Throttle live inference requests
+    this.providerStatus = {
+      activeProvider: "gemini",
+      geminiAvailable: true,
+      geminiQuotaExceeded: false,
+      cooldownRemainingSeconds: 0,
+      huggingFaceConfigured: false,
+      huggingFaceModel: "meta-llama/Llama-3.2-3B-Instruct",
+      primaryModel: "gemini-3.8-flash",
+      lastChecked: 0
+    };
+    this.statusListeners = new Set();
+  }
+
+  /**
+   * Subscribes to AI provider status changes
+   */
+  subscribeToStatus(listener) {
+    if (typeof listener === "function") {
+      this.statusListeners.add(listener);
+      listener(this.providerStatus);
+      return () => this.statusListeners.delete(listener);
+    }
+    return () => {};
+  }
+
+  notifyStatus() {
+    for (const listener of this.statusListeners) {
+      try {
+        listener(this.providerStatus);
+      } catch (e) {}
+    }
+  }
+
+  /**
+   * Fetches latest AI multi-model provider health from server
+   */
+  async fetchProviderStatus() {
+    try {
+      const res = await fetch(`${AI_BASE}/provider-status`);
+      if (res.ok) {
+        const data = await res.json();
+        this.providerStatus = {
+          ...this.providerStatus,
+          ...data,
+          lastChecked: Date.now()
+        };
+        this.notifyStatus();
+        return this.providerStatus;
+      }
+    } catch (err) {
+      console.warn("[GeminiService] Failed to query provider status:", err?.message);
+    }
+    return this.providerStatus;
+  }
+
+  getProviderStatus() {
+    return this.providerStatus;
   }
 
   /**
@@ -130,6 +189,36 @@ class GeminiService {
     const analyzed = (!fingerFlexions && landmarks.length >= 21) ? analyzeHandPose(landmarks) : null;
     const computedFlexions = fingerFlexions || analyzed?.fingerFlexions || null;
 
+    // Offload to AI Web Worker when ready
+    if (aiStreamRecognizer?.workerReady) {
+      try {
+        const workerResult = await aiStreamRecognizer.translateLandmarksWorker({
+          landmarks: landmarks?.slice ? landmarks.slice(0, 21) : landmarks,
+          allHands,
+          fingerFlexions: computedFlexions,
+          orientation,
+          handedness,
+          candidateSign,
+          signLanguage,
+          motionHistory,
+          image
+        });
+        if (workerResult && workerResult.success) {
+          if (workerResult.provider) {
+            this.providerStatus.activeProvider = workerResult.provider;
+            this.providerStatus.geminiQuotaExceeded = !!workerResult.quotaNotice;
+            this.notifyStatus();
+          }
+          if (workerResult.label) {
+            this.setCachedResult(candidateSign || workerResult.label, signLanguage, workerResult);
+          }
+          return workerResult;
+        }
+      } catch (workerErr) {
+        console.warn("[GeminiService] AI Worker translation fallback:", workerErr);
+      }
+    }
+
     try {
       const response = await fetch(`${API_BASE}/translate-landmarks`, {
         method: "POST",
@@ -148,10 +237,22 @@ class GeminiService {
       });
 
       if (!response.ok) {
+        if (response.status === 429 || response.status === 503) {
+          this.providerStatus.geminiAvailable = false;
+          this.providerStatus.geminiQuotaExceeded = true;
+          this.providerStatus.activeProvider = "fallback";
+          this.notifyStatus();
+        }
         throw new Error(`Gemini translation failed with HTTP ${response.status}`);
       }
 
       const data = await response.json();
+
+      if (data?.provider) {
+        this.providerStatus.activeProvider = data.provider;
+        this.providerStatus.geminiQuotaExceeded = !!data.quotaNotice;
+        this.notifyStatus();
+      }
 
       // Cache successful result
       if (data && data.success && data.label) {
@@ -160,7 +261,7 @@ class GeminiService {
 
       return data;
     } catch (err) {
-      console.warn("[GeminiService] Error communicating with Gemini landmark translation endpoint:", err);
+      console.warn("[GeminiService] Error communicating with Gemini landmark translation endpoint, engaging fallback:", err);
 
       // Graceful local kinematic fallback
       const fallbackLabel = candidateSign ? candidateSign.toUpperCase() : "HELLO";
@@ -175,7 +276,9 @@ class GeminiService {
         grammaticalCategory: "Conversational",
         explanation: `Biomechanical analysis matched ${fallbackLabel} in ${signLanguage}.`,
         signLanguage,
-        model: "gemini-kinematic-fallback",
+        model: "kinematic-rule-engine",
+        provider: "kinematic-rules",
+        fallbackActive: true,
         timestamp: Date.now()
       };
     }
@@ -291,13 +394,31 @@ class GeminiService {
         body: JSON.stringify({ glosses, signLanguage })
       });
 
-      if (!response.ok) throw new Error("Sequence translation failed");
-      return await response.json();
+      if (!response.ok) {
+        if (response.status === 429 || response.status === 503) {
+          this.providerStatus.geminiAvailable = false;
+          this.providerStatus.geminiQuotaExceeded = true;
+          this.providerStatus.activeProvider = "fallback";
+          this.notifyStatus();
+        }
+        throw new Error("Sequence translation failed");
+      }
+      const data = await response.json();
+      if (data?.provider) {
+        this.providerStatus.activeProvider = data.provider;
+        this.notifyStatus();
+      }
+      return data;
     } catch (err) {
-      console.warn("[GeminiService] translateSignSequence error:", err);
+      console.warn("[GeminiService] translateSignSequence error, employing local rule grammar:", err);
+      const glossString = (glosses || []).join(" ");
       return {
-        translation: (glosses || []).join(" ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) + ".",
-        confidence: 0.92
+        success: true,
+        translation: glossString ? (glossString.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) + ".") : "Signing detected.",
+        confidence: 0.92,
+        provider: "kinematic-rules",
+        model: "kinematic-rule-engine",
+        fallbackActive: true
       };
     }
   }

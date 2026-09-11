@@ -12,7 +12,9 @@ import {
   Hand,
   Circle,
   PhoneOff,
-  MessageSquare
+  MessageSquare,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 
 export const LiveSessionControlBar = ({
@@ -39,7 +41,10 @@ export const LiveSessionControlBar = ({
   onToggleRecording,
   onEndCall,
   showChat,
-  onToggleChat
+  onToggleChat,
+  geminiAiActive = true,
+  onToggleGeminiAi = null,
+  isGeminiTranslating = false
 }) => {
   return (
     <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between flex-wrap gap-3">
@@ -70,6 +75,25 @@ export const LiveSessionControlBar = ({
           <Layers className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">AI Skeleton</span>
         </button>
+
+        {onToggleGeminiAi && (
+          <button
+            onClick={onToggleGeminiAi}
+            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border cursor-pointer ${
+              geminiAiActive
+                ? "bg-indigo-600 border-indigo-500 text-white shadow-xs"
+                : "bg-slate-900 border-slate-800 text-indigo-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Toggle Live Gemini AI Landmark Translation"
+          >
+            {isGeminiTranslating ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">Gemini AI</span>
+          </button>
+        )}
 
         {/* Camera Zoom & Alignment */}
         <div className="flex items-center space-x-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">

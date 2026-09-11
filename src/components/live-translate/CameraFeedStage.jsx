@@ -54,6 +54,39 @@ export const CameraFeedStage = ({
 
       {isCameraActive ? (
         <>
+          {/* Staged Resource Loader Gate - Ensures features only appear after vision & AI resources load */}
+          {tracking.engineReadyState && !tracking.engineReadyState.isReady && (
+            <div className="absolute inset-0 z-30 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center transition-all duration-300">
+              <div className="relative w-16 h-16 mb-4 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-2xl bg-indigo-500/20 animate-ping opacity-50" />
+                <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                  <Sparkles className="w-7 h-7 text-white animate-spin" style={{ animationDuration: "3s" }} />
+                </div>
+              </div>
+              <h4 className="text-sm sm:text-base font-semibold text-white mb-1">
+                Loading Neural Vision Engine
+              </h4>
+              <p className="text-xs text-slate-400 max-w-xs mb-4">
+                {tracking.engineReadyState.step || "Preparing MediaPipe Lite and kinematic sign dictionary..."}
+              </p>
+
+              {/* Progress Bar */}
+              <div className="w-full max-w-xs bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700/50 mb-2.5">
+                <div
+                  className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300 ease-out"
+                  style={{ width: `${tracking.engineReadyState.progress || 35}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between w-full max-w-xs text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Optimizing for zero lag
+                </span>
+                <span className="font-mono text-indigo-300 font-semibold">{tracking.engineReadyState.progress || 35}%</span>
+              </div>
+            </div>
+          )}
+
           <div
             className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
             style={{

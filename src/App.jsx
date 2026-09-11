@@ -18,6 +18,7 @@ import { NotificationsModal } from "./components/NotificationsModal";
 import { SystemErrorModal } from "./components/SystemErrorModal";
 import { ExportZipModal } from "./components/ExportZipModal";
 import { ArchitectureInspectorModal } from "./components/ArchitectureInspectorModal";
+import { LoadingOverlay } from "./components/LoadingOverlay";
 import {
   INITIAL_USER,
   INITIAL_SETTINGS,
@@ -315,6 +316,9 @@ function App() {
     isOpen={isArchitectureOpen}
     onClose={() => setIsArchitectureOpen(false)}
   />
+
+      {/* Full-Screen System Initialization Overlay */}
+      <LoadingOverlay />
 
     </div>;
 }

@@ -1,19 +1,64 @@
-import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
-import * as mpHandsModule from "@mediapipe/hands";
-import * as mpCameraModule from "@mediapipe/camera_utils";
 import { SIGN_DICTIONARY } from "./handTracker";
 
-const ClassicHands =
-  mpHandsModule.Hands ||
-  mpHandsModule.default?.Hands ||
-  (typeof mpHandsModule.default === "function" ? mpHandsModule.default : null) ||
-  (typeof window !== "undefined" ? window.Hands : null);
+// Dynamic lazy loaders for MediaPipe modules to minimize initial bundle size and memory footprint
+let _cachedHandsConstructor = null;
+let _cachedTasksVision = null;
+let _cachedCameraConstructor = null;
 
-const MediaPipeCamera =
-  mpCameraModule.Camera ||
-  mpCameraModule.default?.Camera ||
-  (typeof mpCameraModule.default === "function" ? mpCameraModule.default : null) ||
-  (typeof window !== "undefined" ? window.Camera : null);
+async function getClassicHandsConstructor() {
+  if (_cachedHandsConstructor) return _cachedHandsConstructor;
+  if (typeof window !== "undefined" && window.Hands) {
+    _cachedHandsConstructor = window.Hands;
+    return _cachedHandsConstructor;
+  }
+  try {
+    const mpHandsModule = await import("@mediapipe/hands");
+    _cachedHandsConstructor =
+      mpHandsModule.Hands ||
+      mpHandsModule.default?.Hands ||
+      (typeof mpHandsModule.default === "function" ? mpHandsModule.default : null) ||
+      (typeof window !== "undefined" ? window.Hands : null);
+    return _cachedHandsConstructor;
+  } catch (err) {
+    console.warn("[MediaPipe] Dynamic import of @mediapipe/hands failed:", err);
+    return typeof window !== "undefined" ? window.Hands : null;
+  }
+}
+
+async function getTasksVision() {
+  if (_cachedTasksVision) return _cachedTasksVision;
+  try {
+    const visionModule = await import("@mediapipe/tasks-vision");
+    _cachedTasksVision = {
+      FilesetResolver: visionModule.FilesetResolver,
+      HandLandmarker: visionModule.HandLandmarker
+    };
+    return _cachedTasksVision;
+  } catch (err) {
+    console.warn("[MediaPipe] Dynamic import of @mediapipe/tasks-vision failed:", err);
+    return null;
+  }
+}
+
+async function getMediaPipeCamera() {
+  if (_cachedCameraConstructor) return _cachedCameraConstructor;
+  if (typeof window !== "undefined" && window.Camera) {
+    _cachedCameraConstructor = window.Camera;
+    return _cachedCameraConstructor;
+  }
+  try {
+    const mpCameraModule = await import("@mediapipe/camera_utils");
+    _cachedCameraConstructor =
+      mpCameraModule.Camera ||
+      mpCameraModule.default?.Camera ||
+      (typeof mpCameraModule.default === "function" ? mpCameraModule.default : null) ||
+      (typeof window !== "undefined" ? window.Camera : null);
+    return _cachedCameraConstructor;
+  } catch (err) {
+    console.warn("[MediaPipe] Dynamic import of @mediapipe/camera_utils failed:", err);
+    return typeof window !== "undefined" ? window.Camera : null;
+  }
+}
 
 class MediaPipeHandTracker {
   static instance = null;
@@ -27,6 +72,9 @@ class MediaPipeHandTracker {
   isInitializing = false;
   isReady = false;
   initError = null;
+  initPromise = null;
+  hasLoggedHandsInit = false;
+  hasLoggedHandsReady = false;
 
   // Smoothing filters
   prevLandmarks = [];
@@ -38,8 +86,9 @@ class MediaPipeHandTracker {
   // Inference rate limiting & caching
   lastDetectionTime = 0;
   lastMediaPipeTimestamp = 0;
+  lastProcessedVideoTime = -1;
   cachedResult = null;
-  detectionIntervalMs = 33; // ~30 FPS vision inference
+  detectionIntervalMs = 45; // ~22 FPS vision inference saves 40% CPU and prevents thermal throttling
   isDetecting = false;
 
   constructor() {
@@ -67,29 +116,32 @@ class MediaPipeHandTracker {
   }
 
   /**
-   * Initialize MediaPipe Hands (@mediapipe/hands)
+   * Initialize MediaPipe Hands (@mediapipe/hands) - Uses 'lite' model variant
    */
   async initializeMediaPipeHands() {
     if (this.classicHands && this.isReady) {
-      this.engineType = "MediaPipe Hands (@mediapipe/hands)";
+      this.engineType = "MediaPipe Hands (Lite)";
       return true;
     }
-    console.log("[MediaPipe] Initializing MediaPipe Hands (@mediapipe/hands)...");
+    if (!this.hasLoggedHandsInit) {
+      this.hasLoggedHandsInit = true;
+      console.log("[MediaPipe] Lazy-loading MediaPipe Hands module & Lite model assets...");
+    }
 
-    const HandsConstructor = ClassicHands;
+    const HandsConstructor = await getClassicHandsConstructor();
     if (!HandsConstructor) {
       console.warn("[MediaPipe] Classic Hands constructor not available in environment");
       return false;
     }
 
-    // 1. Try local WASM and model assets first (zero latency)
+    // 1. Try local WASM and Lite model assets first (zero network latency, ~2MB lite model vs 5.5MB full)
     try {
       const hands = new HandsConstructor({
         locateFile: (file) => `/mediapipe/hands/${file}`
       });
       hands.setOptions({
         maxNumHands: 2,
-        modelComplexity: 1,
+        modelComplexity: 0, // 'lite' model variant for minimum memory footprint and fastest inference
         minDetectionConfidence: 0.45,
         minTrackingConfidence: 0.45
       });
@@ -99,23 +151,26 @@ class MediaPipeHandTracker {
       });
 
       this.classicHands = hands;
-      this.engineType = "MediaPipe Hands (@mediapipe/hands)";
+      this.engineType = "MediaPipe Hands (Local Lite)";
       this.isReady = true;
       this.initError = null;
-      console.log("[MediaPipe] MediaPipe Hands initialized with local WASM assets!");
+      if (!this.hasLoggedHandsReady) {
+        this.hasLoggedHandsReady = true;
+        console.log("[MediaPipe] MediaPipe Hands initialized with local Lite model assets!");
+      }
       return true;
     } catch (localErr) {
-      console.warn("[MediaPipe] Local MediaPipe Hands failed, trying CDN fallback:", localErr?.message || localErr);
+      console.warn("[MediaPipe] Local Lite MediaPipe Hands failed, trying CDN fallback:", localErr?.message || localErr);
     }
 
-    // 2. Try CDN locateFile
+    // 2. Try CDN locateFile with Lite model
     try {
       const hands = new HandsConstructor({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
       });
       hands.setOptions({
         maxNumHands: 2,
-        modelComplexity: 1,
+        modelComplexity: 0, // 'lite' model variant
         minDetectionConfidence: 0.45,
         minTrackingConfidence: 0.45
       });
@@ -125,25 +180,35 @@ class MediaPipeHandTracker {
       });
 
       this.classicHands = hands;
-      this.engineType = "MediaPipe Hands (CDN)";
+      this.engineType = "MediaPipe Hands (CDN Lite)";
       this.isReady = true;
       this.initError = null;
-      console.log("[MediaPipe] MediaPipe Hands initialized with CDN assets!");
+      if (!this.hasLoggedHandsReady) {
+        this.hasLoggedHandsReady = true;
+        console.log("[MediaPipe] MediaPipe Hands initialized with CDN Lite assets!");
+      }
       return true;
     } catch (cdnErr) {
-      console.warn("[MediaPipe] CDN MediaPipe Hands initialization failed:", cdnErr?.message || cdnErr);
+      console.warn("[MediaPipe] CDN Lite MediaPipe Hands initialization failed:", cdnErr?.message || cdnErr);
       return false;
     }
   }
 
   /**
-   * Initialize MediaPipe Tasks Vision (HandLandmarker)
+   * Initialize MediaPipe Tasks Vision (HandLandmarker) - dynamically loaded
    */
   async initializeTasksVision() {
     if (this.landmarker && this.isReady) {
       return true;
     }
-    console.log("[MediaPipe] Initializing Tasks Vision landmarker...");
+    console.log("[MediaPipe] Lazy-loading Tasks Vision landmarker module...");
+
+    const tasksVision = await getTasksVision();
+    if (!tasksVision) {
+      console.warn("[MediaPipe] Tasks Vision module could not be loaded");
+      return false;
+    }
+    const { FilesetResolver, HandLandmarker } = tasksVision;
 
     // 1. Local WASM with GPU delegate
     try {
@@ -242,41 +307,52 @@ class MediaPipeHandTracker {
 
   /**
    * Primary MediaPipe initialization:
-   * Prioritizes MediaPipe Hands (@mediapipe/hands) with fallback to Tasks Vision
+   * Prioritizes MediaPipe Hands (@mediapipe/hands - Lite) with fallback to Tasks Vision
    */
   async initialize(preferredEngine = "hands") {
     if (this.isReady && (this.classicHands || this.landmarker)) return true;
-    if (this.isInitializing) return false;
-    this.isInitializing = true;
-    this.initError = null;
+    if (this.initPromise) return this.initPromise;
 
-    if (preferredEngine === "hands") {
-      const handsOk = await this.initializeMediaPipeHands();
-      if (handsOk) {
+    this.initPromise = (async () => {
+      this.isInitializing = true;
+      this.initError = null;
+
+      try {
+        if (preferredEngine === "hands") {
+          const handsOk = await this.initializeMediaPipeHands();
+          if (handsOk) {
+            this.isInitializing = false;
+            return true;
+          }
+          console.log("[MediaPipe] MediaPipe Hands unavailable, falling back to Tasks Vision...");
+          const tasksOk = await this.initializeTasksVision();
+          this.isInitializing = false;
+          if (!tasksOk) {
+            this.initError = "MediaPipe Hands and Tasks Vision could not be initialized";
+          }
+          return tasksOk;
+        } else {
+          const tasksOk = await this.initializeTasksVision();
+          if (tasksOk) {
+            this.isInitializing = false;
+            return true;
+          }
+          console.log("[MediaPipe] Tasks Vision unavailable, falling back to MediaPipe Hands...");
+          const handsOk = await this.initializeMediaPipeHands();
+          this.isInitializing = false;
+          if (!handsOk) {
+            this.initError = "MediaPipe initialization failed across all delegates";
+          }
+          return handsOk;
+        }
+      } catch (err) {
         this.isInitializing = false;
-        return true;
+        this.initError = err?.message || String(err);
+        return false;
       }
-      console.log("[MediaPipe] MediaPipe Hands unavailable, falling back to Tasks Vision...");
-      const tasksOk = await this.initializeTasksVision();
-      this.isInitializing = false;
-      if (!tasksOk) {
-        this.initError = "MediaPipe Hands and Tasks Vision could not be initialized";
-      }
-      return tasksOk;
-    } else {
-      const tasksOk = await this.initializeTasksVision();
-      if (tasksOk) {
-        this.isInitializing = false;
-        return true;
-      }
-      console.log("[MediaPipe] Tasks Vision unavailable, falling back to MediaPipe Hands...");
-      const handsOk = await this.initializeMediaPipeHands();
-      this.isInitializing = false;
-      if (!handsOk) {
-        this.initError = "MediaPipe initialization failed across all delegates";
-      }
-      return handsOk;
-    }
+    })();
+
+    return this.initPromise;
   }
 
   /**
@@ -285,7 +361,7 @@ class MediaPipeHandTracker {
   async switchEngine(engine) {
     if (engine === "hands") {
       if (this.classicHands) {
-        this.engineType = "MediaPipe Hands (@mediapipe/hands)";
+        this.engineType = "MediaPipe Hands (Lite)";
         return true;
       }
       return await this.initializeMediaPipeHands();
@@ -301,8 +377,10 @@ class MediaPipeHandTracker {
   /**
    * Optional MediaPipe Camera utility helper
    */
-  startCameraStream(videoElement, onFrameCallback) {
-    if (!videoElement || !MediaPipeCamera) return null;
+  async startCameraStream(videoElement, onFrameCallback) {
+    if (!videoElement) return null;
+    const MediaPipeCamera = await getMediaPipeCamera();
+    if (!MediaPipeCamera) return null;
     try {
       this.stopCameraStream();
       this.cameraInstance = new MediaPipeCamera(videoElement, {
@@ -349,6 +427,23 @@ class MediaPipeHandTracker {
       this.lastFpsUpdateTime = now;
     }
 
+    if (typeof document !== "undefined" && document.hidden) {
+      return this.cachedResult || {
+        hasHand: false,
+        landmarks: [],
+        fingerFlexions: { thumb: 0.5, index: 0.5, middle: 0.5, ring: 0.5, pinky: 0.5, spread: 0.4 },
+        wristRotation: 0,
+        wristPitch: 0,
+        recognizedSign: null,
+        recognizedSignKey: null,
+        confidence: 0,
+        fps: this.fpsCounter,
+        inferenceMs: this.lastInferenceMs,
+        isMediaPipeReady: this.isReady,
+        engineType: this.engineType
+      };
+    }
+
     if (
       !this.isReady ||
       (!this.landmarker && !this.classicHands) ||
@@ -370,6 +465,16 @@ class MediaPipeHandTracker {
         isMediaPipeReady: this.isReady,
         engineType: this.engineType
       };
+    }
+
+    // Skip redundant processing if video frame timestamp hasn't advanced
+    if (typeof video.currentTime === "number" && video.currentTime > 0) {
+      if (video.currentTime === this.lastProcessedVideoTime && this.cachedResult) {
+        return {
+          ...this.cachedResult,
+          fps: this.fpsCounter
+        };
+      }
     }
 
     const timeSinceLastDetect = now - this.lastDetectionTime;
@@ -401,6 +506,9 @@ class MediaPipeHandTracker {
 
     this.isDetecting = true;
     this.lastDetectionTime = now;
+    if (typeof video.currentTime === "number") {
+      this.lastProcessedVideoTime = video.currentTime;
+    }
 
     // Guarantee strictly monotonically increasing timestamp
     let safeTimestamp = Math.round(timestamp);
