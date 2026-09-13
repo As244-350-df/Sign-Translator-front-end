@@ -54,36 +54,12 @@ export const CameraFeedStage = ({
 
       {isCameraActive ? (
         <>
-          {/* Staged Resource Loader Gate - Ensures features only appear after vision & AI resources load */}
-          {tracking.engineReadyState && !tracking.engineReadyState.isReady && (
-            <div className="absolute inset-0 z-30 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center transition-all duration-300">
-              <div className="relative w-16 h-16 mb-4 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-2xl bg-indigo-500/20 animate-ping opacity-50" />
-                <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                  <Sparkles className="w-7 h-7 text-white animate-spin" style={{ animationDuration: "3s" }} />
-                </div>
-              </div>
-              <h4 className="text-sm sm:text-base font-semibold text-white mb-1">
-                Loading Neural Vision Engine
-              </h4>
-              <p className="text-xs text-slate-400 max-w-xs mb-4">
-                {tracking.engineReadyState.step || "Preparing MediaPipe Lite and kinematic sign dictionary..."}
-              </p>
-
-              {/* Progress Bar */}
-              <div className="w-full max-w-xs bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700/50 mb-2.5">
-                <div
-                  className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-300 ease-out"
-                  style={{ width: `${tracking.engineReadyState.progress || 35}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between w-full max-w-xs text-[11px] text-slate-400">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Optimizing for zero lag
-                </span>
-                <span className="font-mono text-indigo-300 font-semibold">{tracking.engineReadyState.progress || 35}%</span>
-              </div>
+          {/* Non-blocking Vision Engine Warmup Status Badge */}
+          {tracking.engineReadyState && !tracking.engineReadyState.isReady && tracking.cameraStreamStatus === "active" && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-full bg-slate-950/85 backdrop-blur-md border border-indigo-500/40 text-indigo-200 text-xs font-semibold flex items-center space-x-2 shadow-lg animate-in fade-in">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
+              <span>{tracking.engineReadyState.step || "Initializing Neural Vision Engine..."}</span>
+              <span className="font-mono text-cyan-300 font-bold">({tracking.engineReadyState.progress || 35}%)</span>
             </div>
           )}
 
@@ -96,7 +72,20 @@ export const CameraFeedStage = ({
           >
             {tracking.inputSourceMode !== "simulator" && (
               <video
-                ref={tracking.videoRef}
+                ref={(el) => {
+                  tracking.videoRef.current = el;
+                  if (el && tracking.mediaStreamRef?.current) {
+                    if (el.srcObject !== tracking.mediaStreamRef.current) {
+                      el.muted = true;
+                      el.defaultMuted = true;
+                      el.setAttribute("muted", "");
+                      el.setAttribute("playsinline", "true");
+                      el.setAttribute("webkit-playsinline", "true");
+                      el.srcObject = tracking.mediaStreamRef.current;
+                      el.play().catch(() => {});
+                    }
+                  }
+                }}
                 autoPlay
                 muted
                 playsInline
@@ -105,11 +94,24 @@ export const CameraFeedStage = ({
                   transform: tracking.inputSourceMode === "webcam" ? "scaleX(-1)" : "none",
                   transformOrigin: "center center"
                 }}
-                className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ease-out ${
-                  tracking.inputSourceMode === "webcam" && tracking.cameraStreamStatus !== "active"
-                    ? "opacity-20 filter blur-xs"
-                    : "opacity-100"
-                }`}
+                onLoadedMetadata={(e) => {
+                  e.target.play().catch(() => {});
+                  if (e.target.videoWidth > 0 && e.target.videoHeight > 0) {
+                    tracking.setActiveStreamResolution?.({
+                      width: e.target.videoWidth,
+                      height: e.target.videoHeight
+                    });
+                    if (tracking.cameraStreamStatus !== "active" && tracking.inputSourceMode === "webcam") {
+                      tracking.setCameraStreamStatus?.("active");
+                    }
+                  }
+                }}
+                onPlay={() => {
+                  if (tracking.cameraStreamStatus !== "active" && tracking.inputSourceMode === "webcam") {
+                    tracking.setCameraStreamStatus?.("active");
+                  }
+                }}
+                className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ease-out opacity-100"
               />
             )}
 

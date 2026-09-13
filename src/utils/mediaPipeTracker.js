@@ -1,4 +1,10 @@
 import { SIGN_DICTIONARY } from "./handTracker";
+import {
+  mapLandmarksToGesture,
+  drawHandLandmarksCanvas,
+  GESTURE_DICTIONARY
+} from "./gestureMapping";
+import { MediaPipeHandsPipeline, mediaPipePipeline } from "./mediaPipeHandsPipeline";
 
 // Dynamic lazy loaders for MediaPipe modules to minimize initial bundle size and memory footprint
 let _cachedHandsConstructor = null;
@@ -769,6 +775,46 @@ class MediaPipeHandTracker {
    * Maps 21 3D Landmark Coordinates & Finger Curl Vector -> Recognized Sign
    */
   classifySign(flex, orient, raw) {
+    // 1. Evaluate with modular Gesture Mapping Engine first
+    if (raw && raw.length >= 21) {
+      const mapped = mapLandmarksToGesture(raw, "Right", 1280, 720);
+      if (mapped && mapped.gestureId !== "UNKNOWN" && mapped.gestureId !== "OPEN_PALM") {
+        const gId = mapped.gestureId;
+        const dictKey =
+          gId === "THUMBS_UP" ? "GOOD" :
+          gId === "THUMBS_DOWN" ? "BAD" :
+          gId === "PEACE" ? "PEACE" :
+          gId === "FIST" ? "A" :
+          gId === "OKAY" ? "OKAY" :
+          gId === "I_LOVE_YOU" ? "I_LOVE_YOU" :
+          gId === "ROCK_ON" ? "ROCK" :
+          gId === "CALL_ME" ? "CALL_ME" :
+          gId === "POINTING_UP" ? "1" :
+          gId === "WATER" ? "WATER" :
+          gId === "FOUR" ? "4" :
+          gId === "THREE" ? "3" :
+          gId === "L_SHAPE" ? "L" :
+          gId === "STOP" ? "STOP" :
+          gId;
+
+        const matchedSign = SIGN_DICTIONARY[dictKey] || {
+          symbol: mapped.emoji || "🖐️",
+          signName: mapped.name || gId,
+          translatedText: mapped.aslGloss || mapped.name || gId,
+          meaning: mapped.meaning || mapped.description || "MediaPipe Detected Gesture",
+          category: mapped.category || "gesture",
+          confidence: mapped.confidence || 0.96
+        };
+
+        return {
+          sign: matchedSign,
+          key: dictKey,
+          confidence: mapped.confidence || 0.96,
+          gesture: mapped
+        };
+      }
+    }
+
     const { thumb, index, middle, ring, pinky, handScale } = flex;
     const thumbTip = raw[4];
     const indexTip = raw[8];
@@ -1027,9 +1073,52 @@ class MediaPipeHandTracker {
       ctx.stroke();
     }
 
+    // On-Canvas Real-Time Gesture HUD Badge
+    if (signName && signName !== "UNKNOWN" && landmarks[0]) {
+      const wrist = landmarks[0];
+      const badgeX = Math.max(16, Math.min(wrist.x - 60, (ctx.canvas?.width || 1280) - 200));
+      const badgeY = Math.max(30, Math.min(wrist.y + 35, (ctx.canvas?.height || 720) - 50));
+
+      const text = `${signName}`;
+      const subText = `${Math.round(confidence * 100)}% Match • 21 Landmarks`;
+
+      ctx.font = "bold 13px system-ui, -apple-system, sans-serif";
+      const textWidth = ctx.measureText(text).width;
+      const badgeW = Math.max(textWidth + 24, 130);
+      const badgeH = 38;
+
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") {
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+      } else {
+        ctx.rect(badgeX, badgeY, badgeW, badgeH);
+      }
+      ctx.fill();
+
+      ctx.strokeStyle = isRealHand ? "#10B981" : "#6366F1";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillText(text, badgeX + 10, badgeY + 16);
+
+      ctx.font = "10px monospace";
+      ctx.fillStyle = isRealHand ? "#34D399" : "#A5B4FC";
+      ctx.fillText(subText, badgeX + 10, badgeY + 30);
+    }
+
     ctx.restore();
   }
 }
 
 const mediaPipeTracker = MediaPipeHandTracker.getInstance();
-export { MediaPipeHandTracker, mediaPipeTracker };
+export {
+  MediaPipeHandTracker,
+  mediaPipeTracker,
+  MediaPipeHandsPipeline,
+  mediaPipePipeline,
+  mapLandmarksToGesture,
+  GESTURE_DICTIONARY,
+  drawHandLandmarksCanvas
+};

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useSystemInitStatus } from "../hooks/useSystemInitStatus";
 
-export const LoadingOverlay = ({ onReady }) => {
+export const LoadingOverlay = ({ onReady, onDismiss }) => {
   const { status, progress, currentStepMessage, allReady, elapsedTime } = useSystemInitStatus();
 
   const [isFadingOut, setIsFadingOut] = useState(false);
@@ -31,6 +31,7 @@ export const LoadingOverlay = ({ onReady }) => {
       // Once opacity fade completes (700ms), unmount from DOM completely
       const unmountTimer = setTimeout(() => {
         setIsRemoved(true);
+        if (onDismiss) onDismiss();
       }, 1300);
 
       return () => {
@@ -38,7 +39,7 @@ export const LoadingOverlay = ({ onReady }) => {
         clearTimeout(unmountTimer);
       };
     }
-  }, [allReady, forceBypassed, onReady]);
+  }, [allReady, forceBypassed, onReady, onDismiss]);
 
   if (isRemoved) {
     return null;

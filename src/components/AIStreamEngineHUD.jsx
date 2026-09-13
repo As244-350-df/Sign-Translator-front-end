@@ -163,13 +163,42 @@ export const AIStreamEngineHUD = ({
 
         {/* Quick Toggles & Controls */}
         <div className="flex items-center space-x-2">
+          {/* Backup AI Override Button */}
+          <button
+            id="toggle-backup-ai-btn"
+            onClick={() => {
+              const isFallback =
+                providerStatus?.activeProvider === "fallback" ||
+                providerStatus?.activeProvider === "kinematic-rules" ||
+                providerStatus?.fallbackActive;
+              geminiService.setForcedProvider(isFallback ? "gemini" : "fallback");
+            }}
+            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border flex items-center space-x-1 ${
+              providerStatus?.activeProvider === "fallback" ||
+              providerStatus?.activeProvider === "kinematic-rules" ||
+              providerStatus?.fallbackActive
+                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600"
+            }`}
+            title="Toggle Backup AI Engine continuity mode"
+          >
+            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+            <span>
+              {providerStatus?.activeProvider === "fallback" ||
+              providerStatus?.activeProvider === "kinematic-rules" ||
+              providerStatus?.fallbackActive
+                ? "Backup AI Active"
+                : "Backup AI"}
+            </span>
+          </button>
+
           {/* Quick Stream Test Button */}
           <button
             id="ai-stream-test-btn"
             onClick={handleTestDirectStream}
             disabled={isStreamingTest}
             className="px-2.5 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
-            title="Stream sample frame to Gemini"
+            title="Stream sample frame to Gemini or Backup AI"
           >
             <Send className={`w-3 h-3 ${isStreamingTest ? "animate-spin" : ""}`} />
             <span>{isStreamingTest ? "Streaming..." : "Test Stream"}</span>

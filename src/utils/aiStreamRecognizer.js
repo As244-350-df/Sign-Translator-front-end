@@ -74,22 +74,34 @@ class AIStreamRecognizer {
     };
   }
 
+  _lastHealthCheckTime = 0;
+  _cachedHealthResult = null;
+
   async checkStreamConnection() {
+    const now = Date.now();
+    if (this._cachedHealthResult && now - this._lastHealthCheckTime < 10000) {
+      return this._cachedHealthResult;
+    }
+
     try {
-      const res = await fetch("/api/health", { signal: AbortSignal.timeout(3000) });
+      const res = await fetch("/api/health", { signal: AbortSignal.timeout(1200) });
       if (res.ok) {
         const data = await res.json();
-        return {
+        this._lastHealthCheckTime = now;
+        this._cachedHealthResult = {
           connected: true,
-          geminiEnabled: data.geminiEnabled,
+          geminiEnabled: Boolean(data.geminiEnabled),
           service: data.service,
           status: data.status
         };
+        return this._cachedHealthResult;
       }
     } catch (err) {
-      console.warn("[AIStreamRecognizer] Health check warning:", err?.message || err);
+      // Quiet warning for local fallback
     }
-    return { connected: true, simulated: true };
+    this._lastHealthCheckTime = now;
+    this._cachedHealthResult = { connected: true, simulated: true, geminiEnabled: false };
+    return this._cachedHealthResult;
   }
 
   initWorker() {
@@ -552,6 +564,19 @@ class AIStreamRecognizer {
       });
     }
     return null;
+  }
+
+  /**
+   * Feed live vision detection into stream telemetry
+   */
+  updateFromDetection(signName, confidence = 0.96, meaning = "") {
+    if (!signName) return;
+    const cleanMeaning = meaning || `MediaPipe: ${signName}`;
+    const existing = this.lastPredictions.filter((p) => p.sign !== signName);
+    this.lastPredictions = [
+      { sign: signName, confidence: Number((confidence || 0.96).toFixed(2)), meaning: cleanMeaning },
+      ...existing.slice(0, 3)
+    ];
   }
 
   /**

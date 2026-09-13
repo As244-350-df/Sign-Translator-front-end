@@ -116,34 +116,47 @@ export const useSystemInitStatus = () => {
     }
 
     // 3. MediaPipe Engine (Tasks Vision / Classic Hands WASM)
-    mediaPipeTracker
-      .initialize()
-      .then((ok) => {
-        if (!isMounted) return;
-        const mpStatus = mediaPipeTracker.getStatus();
-        setStatus((prev) => ({
-          ...prev,
-          mediaPipeEngine: {
-            ...prev.mediaPipeEngine,
-            ready: true,
-            detail: "21 3D landmarks & kinematics initialized",
-            backend: mpStatus.engineType || "MediaPipe Hands"
-          }
-        }));
-      })
-      .catch((err) => {
-        console.warn("[LoadingOverlay] MediaPipe Engine fallback:", err?.message || err);
-        if (!isMounted) return;
-        setStatus((prev) => ({
-          ...prev,
-          mediaPipeEngine: {
-            ...prev.mediaPipeEngine,
-            ready: true,
-            detail: "Kinematic joint tracking ready",
-            backend: "Kinematic Vision Fallback"
-          }
-        }));
-      });
+    if (mediaPipeTracker.isReady) {
+      const mpStatus = mediaPipeTracker.getStatus();
+      setStatus((prev) => ({
+        ...prev,
+        mediaPipeEngine: {
+          ...prev.mediaPipeEngine,
+          ready: true,
+          detail: "21 3D landmarks & kinematics initialized",
+          backend: mpStatus.engineType || "MediaPipe Hands"
+        }
+      }));
+    } else {
+      mediaPipeTracker
+        .initialize()
+        .then((ok) => {
+          if (!isMounted) return;
+          const mpStatus = mediaPipeTracker.getStatus();
+          setStatus((prev) => ({
+            ...prev,
+            mediaPipeEngine: {
+              ...prev.mediaPipeEngine,
+              ready: true,
+              detail: "21 3D landmarks & kinematics initialized",
+              backend: mpStatus.engineType || "MediaPipe Hands"
+            }
+          }));
+        })
+        .catch((err) => {
+          console.warn("[LoadingOverlay] MediaPipe Engine fallback:", err?.message || err);
+          if (!isMounted) return;
+          setStatus((prev) => ({
+            ...prev,
+            mediaPipeEngine: {
+              ...prev.mediaPipeEngine,
+              ready: true,
+              detail: "Kinematic joint tracking ready",
+              backend: "Kinematic Vision Fallback"
+            }
+          }));
+        });
+    }
 
     // 4. Gemini AI Stream & Server Health Connection
     aiStreamRecognizer

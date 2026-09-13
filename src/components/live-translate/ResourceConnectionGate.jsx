@@ -21,6 +21,7 @@ export const ResourceConnectionGate = ({
   onSelectSimulator,
   onSelectDemoClip,
   onRetryCamera,
+  onProceedImmediately,
   cameraError
 }) => {
   const isInIframe = isInsideIframe();
@@ -338,15 +339,29 @@ export const ResourceConnectionGate = ({
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleRetry}
-            disabled={retrying}
-            className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/40 flex items-center space-x-1.5 transition-colors cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-indigo-300 ${retrying ? "animate-spin" : ""}`} />
-            <span>Retry Connection</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            {onProceedImmediately && (
+              <button
+                type="button"
+                onClick={onProceedImmediately}
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 text-xs font-semibold border border-emerald-500/40 flex items-center space-x-1.5 transition-colors cursor-pointer shadow-sm"
+                title="Enter live translate now"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Enter Live Translate</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={retrying}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 text-xs font-semibold border border-indigo-500/40 flex items-center space-x-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-indigo-300 ${retrying ? "animate-spin" : ""}`} />
+              <span>Retry Connection</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
