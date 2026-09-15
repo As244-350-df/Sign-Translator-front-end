@@ -61,18 +61,27 @@ export const LiveTranslateView = ({
   const speechListenerRef = useRef(null);
 
   const handleRecognizedDetection = useCallback((detection) => {
-    const textOutput = detection.signMeaning.translatedText;
+    if (!detection) return;
+    // Support both full detection structure and direct sign object
+    const meaning = detection.signMeaning || detection;
+    const textOutput = meaning?.translatedText || meaning?.signName || "";
+    if (!textOutput) return;
+
     setFullSentence((prev) => {
       if (!prev || prev.trim() === "") {
         return textOutput.charAt(0).toUpperCase() + textOutput.slice(1);
       }
       return `${prev.trim()} ${textOutput}`;
     });
+
+    const symbol = meaning?.symbol || "🤟";
+    const confidenceScore = typeof detection.confidence === "number" ? detection.confidence : (meaning?.confidence || 0.95);
+
     setRecognizedSigns((prev) => [
       ...prev.slice(-14),
       {
-        text: `${detection.signMeaning?.symbol} ${detection.signMeaning?.translatedText.toUpperCase()}`,
-        confidence: detection.confidence,
+        text: `${symbol} ${textOutput.toUpperCase()}`,
+        confidence: confidenceScore,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         hand: "right",
         type: "word"
@@ -142,9 +151,11 @@ export const LiveTranslateView = ({
     setDictionaryMap({ ...updated });
   };
   const handleCommitCurrentSign = (customSign) => {
-    const sign = customSign || tracking.handTrackerRef.current.getCurrentSignMeaning();
+    const sign = customSign || tracking.handTrackerRef.current?.getCurrentSignMeaning();
     if (!sign) return;
-    const textOutput = sign.translatedText;
+    const textOutput = sign.translatedText || sign.signName || "";
+    if (!textOutput) return;
+
     setFullSentence((prev) => {
       if (!prev || prev.trim() === "") {
         return textOutput.charAt(0).toUpperCase() + textOutput.slice(1);
@@ -154,7 +165,7 @@ export const LiveTranslateView = ({
     setRecognizedSigns((prev) => [
       ...prev.slice(-14),
       {
-        text: `${sign.symbol} ${sign.translatedText.toUpperCase()}`,
+        text: `${sign.symbol || "🤟"} ${textOutput.toUpperCase()}`,
         confidence: sign.confidence || 0.98,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         hand: "right",

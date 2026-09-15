@@ -695,9 +695,9 @@ export const useCameraHandTracking = ({
         // Live AI Stream telemetry & continuous recognition
         if (detection.isRealHandDetected && detection.signMeaning) {
           aiStreamRecognizer.updateFromDetection(
-            detection.signMeaning.signName,
-            detection.confidence,
-            detection.signMeaning.translatedText
+            detection.signMeaning.signName || "GESTURE",
+            detection.confidence || 0.9,
+            detection.signMeaning.translatedText || detection.signMeaning.signName || ""
           );
 
           const currentNow = performance.now();
@@ -735,7 +735,10 @@ export const useCameraHandTracking = ({
             onRecognizedSignRef.current(detection);
           }
           if (autoSpeakOnCommitRef.current) {
-            speakText(detection.signMeaning.translatedText, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
+            const textToSpeak = detection.signMeaning.translatedText || detection.signMeaning.signName;
+            if (textToSpeak) {
+              speakText(textToSpeak, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
+            }
           }
         }
         ctx.clearRect(0, 0, canvas.width, canvas.height);

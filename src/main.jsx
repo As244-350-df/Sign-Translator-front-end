@@ -27,7 +27,8 @@ if (typeof window !== "undefined") {
     if (
       msg.includes("WebSocket") ||
       msg.includes("websocket") ||
-      msg.includes("closed without opened")
+      msg.includes("closed without opened") ||
+      msg === "Script error."
     ) {
       event.preventDefault();
     }

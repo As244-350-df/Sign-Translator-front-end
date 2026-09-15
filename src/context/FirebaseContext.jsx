@@ -55,11 +55,18 @@ export const FirebaseProvider = ({ children }) => {
             setSettings(prev => ({ ...prev, ...userSettings }));
           }
         } catch (err) {
-          console.error('Error synchronizing user profile with Firestore:', err);
+          console.warn('User profile sync notice:', err?.message || err);
         }
       } else {
-        // Guest / Demo mode: fallback to initial local user
-        setUser(INITIAL_USER);
+        // Check for stored guest session
+        const storedGuest = authService.getStoredGuestSession();
+        if (storedGuest?.user && storedGuest?.profile) {
+          setFirebaseUser(storedGuest.user);
+          setUser(storedGuest.profile);
+        } else {
+          // Fallback to default user
+          setUser(INITIAL_USER);
+        }
       }
     });
 
@@ -107,7 +114,7 @@ export const FirebaseProvider = ({ children }) => {
       const resultUser = await authService.signInWithGoogle();
       return resultUser;
     } catch (err) {
-      console.error('Firebase Auth Error:', err);
+      console.warn('Firebase Google Auth notice:', err?.message || err);
       setAuthError(err.message);
       throw err;
     }
@@ -120,7 +127,7 @@ export const FirebaseProvider = ({ children }) => {
       const resultUser = await authService.signInWithEmail(email, password);
       return resultUser;
     } catch (err) {
-      console.error('Email Sign-In Error:', err);
+      console.warn('Firebase Email Sign-In notice:', err?.message || err);
       setAuthError(err.message);
       throw err;
     }
@@ -133,10 +140,19 @@ export const FirebaseProvider = ({ children }) => {
       const resultUser = await authService.signUpWithEmail(email, password, profileData);
       return resultUser;
     } catch (err) {
-      console.error('Email Registration Error:', err);
+      console.warn('Firebase Email Registration notice:', err?.message || err);
       setAuthError(err.message);
       throw err;
     }
+  };
+
+  // Local / Guest Login
+  const loginAsGuest = (profileData = {}) => {
+    setAuthError(null);
+    const { user: guestUser, profile: guestProfile } = authService.createGuestSession(profileData);
+    setFirebaseUser(guestUser);
+    setUser(guestProfile);
+    return guestUser;
   };
 
   // Reset Password
@@ -146,7 +162,7 @@ export const FirebaseProvider = ({ children }) => {
       await authService.sendPasswordReset(email);
       return true;
     } catch (err) {
-      console.error('Reset Password Error:', err);
+      console.warn('Reset Password notice:', err?.message || err);
       setAuthError(err.message);
       throw err;
     }
@@ -157,11 +173,12 @@ export const FirebaseProvider = ({ children }) => {
     setAuthError(null);
     try {
       await authService.signOutUser();
+    } catch (err) {
+      console.warn('Logout notice:', err?.message || err);
+    } finally {
+      authService.clearStoredGuestSession();
       setFirebaseUser(null);
       setUser(INITIAL_USER);
-    } catch (err) {
-      console.error('Logout error:', err);
-      setAuthError(err.message);
     }
   };
 
@@ -269,6 +286,7 @@ export const FirebaseProvider = ({ children }) => {
     loginWithGoogle,
     loginWithEmail,
     registerWithEmail,
+    loginAsGuest,
     resetPassword,
     logoutUser,
     clearAuthError,

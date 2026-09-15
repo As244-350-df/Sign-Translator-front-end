@@ -18,6 +18,10 @@ export function formatAuthErrorMessage(error) {
   if (!error) return 'An unknown error occurred.';
   const code = error.code || '';
   switch (code) {
+    case 'auth/operation-not-allowed':
+      return 'Email/password sign-in is not enabled on this Firebase project yet. You can sign in using Demo/Guest mode or enable Email/Password in Firebase Console.';
+    case 'auth/network-request-failed':
+      return 'Network connection to authentication server failed (often due to iframe popup restrictions). You can sign in with Demo/Guest mode or open the app in a new tab.';
     case 'auth/invalid-email':
       return 'The email address is invalid.';
     case 'auth/user-disabled':
@@ -37,8 +41,6 @@ export function formatAuthErrorMessage(error) {
       return 'Sign-in popup was blocked by your browser. Please allow popups for this site.';
     case 'auth/too-many-requests':
       return 'Access temporarily disabled due to multiple failed login attempts. Please try again later or reset your password.';
-    case 'auth/network-request-failed':
-      return 'Network error. Please check your internet connection.';
     case 'auth/requires-recent-login':
       return 'This action requires recent authentication. Please sign in again.';
     default:
@@ -59,6 +61,56 @@ export const authService = {
    */
   getCurrentUser() {
     return auth.currentUser;
+  },
+
+  /**
+   * Create or restore local guest/demo session
+   */
+  createGuestSession(profileData = {}) {
+    const guestUid = `guest-${Date.now()}`;
+    const email = profileData.email || 'guest@signlink.app';
+    const name = profileData.name || email.split('@')[0] || 'Guest User';
+    const guestUser = {
+      uid: guestUid,
+      email,
+      displayName: name,
+      photoURL: profileData.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250',
+      isAnonymous: true
+    };
+    const profile = {
+      userId: guestUid,
+      name,
+      email,
+      avatar: profileData.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250',
+      role: profileData.role || 'user_deaf',
+      primaryLanguage: profileData.primaryLanguage || 'ASL',
+      secondaryLanguage: profileData.secondaryLanguage || 'English',
+      bio: profileData.bio || 'Guest profile exploring SignLink.',
+      verified: true,
+      availableStatus: 'online',
+      certifications: profileData.certifications || [],
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      localStorage.setItem('signlink_guest_session', JSON.stringify({ user: guestUser, profile }));
+    } catch {}
+
+    return { user: guestUser, profile };
+  },
+
+  getStoredGuestSession() {
+    try {
+      const data = localStorage.getItem('signlink_guest_session');
+      if (data) return JSON.parse(data);
+    } catch {}
+    return null;
+  },
+
+  clearStoredGuestSession() {
+    try {
+      localStorage.removeItem('signlink_guest_session');
+    } catch {}
   },
 
   /**
@@ -89,8 +141,10 @@ export const authService = {
 
       return user;
     } catch (error) {
-      console.error('Sign-in with Google failed:', error);
-      throw new Error(formatAuthErrorMessage(error));
+      console.warn('Sign-in with Google notice:', error?.message || error);
+      const err = new Error(formatAuthErrorMessage(error));
+      err.code = error?.code;
+      throw err;
     }
   },
 
@@ -122,8 +176,10 @@ export const authService = {
 
       return user;
     } catch (error) {
-      console.error('Sign-in with email failed:', error);
-      throw new Error(formatAuthErrorMessage(error));
+      console.warn('Sign-in with email notice:', error?.message || error);
+      const err = new Error(formatAuthErrorMessage(error));
+      err.code = error?.code;
+      throw err;
     }
   },
 
@@ -177,8 +233,10 @@ export const authService = {
 
       return user;
     } catch (error) {
-      console.error('Sign up with email failed:', error);
-      throw new Error(formatAuthErrorMessage(error));
+      console.warn('Sign up with email notice:', error?.message || error);
+      const err = new Error(formatAuthErrorMessage(error));
+      err.code = error?.code;
+      throw err;
     }
   },
 
@@ -190,8 +248,10 @@ export const authService = {
       await sendPasswordResetEmail(auth, email.trim());
       return true;
     } catch (error) {
-      console.error('Send password reset failed:', error);
-      throw new Error(formatAuthErrorMessage(error));
+      console.warn('Send password reset notice:', error?.message || error);
+      const err = new Error(formatAuthErrorMessage(error));
+      err.code = error?.code;
+      throw err;
     }
   },
 
@@ -200,11 +260,14 @@ export const authService = {
    */
   async signOutUser() {
     try {
+      authService.clearStoredGuestSession();
       await signOut(auth);
       return true;
     } catch (error) {
-      console.error('Sign out failed:', error);
-      throw new Error(formatAuthErrorMessage(error));
+      console.warn('Sign out notice:', error?.message || error);
+      const err = new Error(formatAuthErrorMessage(error));
+      err.code = error?.code;
+      throw err;
     }
   }
 };

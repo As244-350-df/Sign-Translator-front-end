@@ -64,6 +64,11 @@ export const CameraGestureCapture = ({
   const containerRef = useRef(null);
   const lastCommittedSignRef = useRef(null);
   const commitCooldownRef = useRef(0);
+  const sentenceRef = useRef("");
+
+  useEffect(() => {
+    sentenceRef.current = sentence;
+  }, [sentence]);
 
   // Initialize tracker once
   if (!handTrackerRef.current) {
@@ -201,11 +206,14 @@ export const CameraGestureCapture = ({
     const word = signObj.translatedText || signObj.signName;
     if (!word) return;
 
-    setSentence((prev) => {
-      const updated = prev ? `${prev} ${word}` : word;
-      if (onSentenceUpdate) onSentenceUpdate(updated);
-      return updated;
-    });
+    const current = sentenceRef.current;
+    const updated = current && current.trim() ? `${current.trim()} ${word}` : word;
+    sentenceRef.current = updated;
+    setSentence(updated);
+
+    if (onSentenceUpdate) {
+      onSentenceUpdate(updated);
+    }
 
     setRecognizedSignsHistory((prev) => [
       ...prev.slice(-9),
@@ -223,7 +231,12 @@ export const CameraGestureCapture = ({
     }
 
     if (onSignDetected) {
-      onSignDetected(signObj);
+      onSignDetected({
+        signMeaning: signObj,
+        translatedText: word,
+        symbol: signObj.symbol || "🤟",
+        confidence: signObj.confidence || 0.95
+      });
     }
   }, [autoSpeak, onSentenceUpdate, onSignDetected]);
 
@@ -245,9 +258,12 @@ export const CameraGestureCapture = ({
 
   // Clear sentence
   const handleClearSentence = () => {
+    sentenceRef.current = "";
     setSentence("");
     setRecognizedSignsHistory([]);
-    if (onSentenceUpdate) onSentenceUpdate("");
+    if (onSentenceUpdate) {
+      onSentenceUpdate("");
+    }
   };
 
   // Start camera on mount if autoStart is true
