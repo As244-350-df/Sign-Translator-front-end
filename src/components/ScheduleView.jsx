@@ -8,14 +8,26 @@ import {
   RotateCw
 } from "lucide-react";
 import { api } from "../utils/api";
+import { useFirebase } from "../context/FirebaseContext";
+
 const ScheduleView = ({
   settings,
   onJoinCall,
   onOpenDirectory
 }) => {
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { bookings: contextBookings, removeBooking } = useFirebase();
+  const [bookings, setBookings] = useState(contextBookings || []);
+  const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState("upcoming");
+
+  useEffect(() => {
+    if (contextBookings && contextBookings.length > 0) {
+      setBookings(contextBookings);
+    } else {
+      fetchBookings();
+    }
+  }, [contextBookings]);
+
   const fetchBookings = async () => {
     setLoading(true);
     try {
@@ -27,16 +39,12 @@ const ScheduleView = ({
       setLoading(false);
     }
   };
-  useEffect(() => {
-    fetchBookings();
-  }, []);
+
   const handleCancelBooking = async (id, e) => {
     e.stopPropagation();
     if (confirm("Are you sure you want to cancel this booking?")) {
-      const ok = await api.cancelBooking(id);
-      if (ok) {
-        setBookings((prev) => prev.filter((b) => b.id !== id));
-      }
+      await removeBooking(id);
+      setBookings((prev) => prev.map((b) => b.id === id ? { ...b, status: 'cancelled' } : b));
     }
   };
   const filteredBookings = useMemo(() => {

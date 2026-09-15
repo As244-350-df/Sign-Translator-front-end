@@ -12,7 +12,9 @@ import { ScheduleView } from "./components/ScheduleView";
 import { SessionHistoryView } from "./components/SessionHistoryView";
 import { SessionReviewModal } from "./components/SessionReviewModal";
 import { ResourceHubView } from "./components/ResourceHubView";
+import { SignDictionaryView } from "./components/dictionary/SignDictionaryView";
 import { SettingsView } from "./components/SettingsView";
+import { UserProfile } from "./components/UserProfile";
 import { AuthModal } from "./components/AuthModal";
 import { NotificationsModal } from "./components/NotificationsModal";
 import { SystemErrorModal } from "./components/SystemErrorModal";
@@ -26,11 +28,23 @@ import {
   MOCK_INTERPRETERS
 } from "./data/mockData";
 import { api } from "./utils/api";
+import { useFirebase } from "./context/FirebaseContext";
+
 function App() {
-  const [user, setUser] = useState(INITIAL_USER);
-  const [settings, setSettings] = useState(INITIAL_SETTINGS);
+  const {
+    user,
+    settings,
+    notifications,
+    firebaseUser,
+    isAuthenticated,
+    updateUserProfile,
+    updateUserSettings,
+    recordSession,
+    addBooking,
+    setNotifications
+  } = useFirebase();
+
   const [activeTab, setActiveTab] = useState("translate");
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
   const [isCallActive, setIsCallActive] = useState(false);
   const [activeCallInterpreterId, setActiveCallInterpreterId] = useState("int-01");
   const [selectedInterpreter, setSelectedInterpreter] = useState(null);
@@ -41,21 +55,7 @@ function App() {
   const [isExportZipOpen, setIsExportZipOpen] = useState(false);
   const [isArchitectureOpen, setIsArchitectureOpen] = useState(false);
   const [errorModalType, setErrorModalType] = useState(null);
-  useEffect(() => {
-    async function loadInitialBackendData() {
-      try {
-        const [profile, notifs] = await Promise.all([
-          api.getUserProfile(),
-          api.getNotifications()
-        ]);
-        if (profile) setUser(profile);
-        if (notifs && notifs.length > 0) setNotifications(notifs);
-      } catch (err) {
-        console.warn("Could not reach backend at boot, using local state:", err);
-      }
-    }
-    loadInitialBackendData();
-  }, []);
+
   useEffect(() => {
     if (settings.darkTheme) {
       document.documentElement.classList.add("dark");
@@ -63,27 +63,26 @@ function App() {
       document.documentElement.classList.remove("dark");
     }
   }, [settings.darkTheme]);
+
   const handleUpdateSettings = (newSettings) => {
-    setSettings((prev) => ({ ...prev, ...newSettings }));
+    updateUserSettings(newSettings);
   };
+
   const handleToggleRole = async () => {
     const nextRole = user.role === "interpreter" ? "user_deaf" : "interpreter";
-    const updatedUser = {
-      ...user,
-      role: nextRole
-    };
-    setUser(updatedUser);
-    await api.updateUserProfile({ role: nextRole });
+    await updateUserProfile({ role: nextRole });
     if (user.role !== "interpreter") {
       setActiveTab("interpreter_dashboard");
     } else {
       setActiveTab("translate");
     }
   };
+
   const handleStartCall = (interpreterId = "int-01") => {
     setActiveCallInterpreterId(interpreterId);
     setIsCallActive(true);
   };
+
   const handleEndCall = async () => {
     setIsCallActive(false);
     const currentInterpreter = MOCK_INTERPRETERS.find((i) => i.id === activeCallInterpreterId) || MOCK_INTERPRETERS[0];
@@ -98,7 +97,7 @@ function App() {
       `Consultation with ${currentInterpreter.name}`,
       settings.primarySignLanguage
     );
-    const saved = await api.saveSession({
+    const saved = await recordSession({
       type: "interpreter_call",
       title: `Live Session with ${currentInterpreter.name}`,
       duration: "02m 45s",
@@ -112,22 +111,25 @@ function App() {
     });
     setSelectedSessionHistory(saved);
   };
+
   const handleMarkAllNotificationsAsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     await api.markAllNotificationsRead();
   };
+
   const handleBookSlot = async (interpreter, slot) => {
     try {
-      await api.createBooking({
+      await addBooking({
         interpreterId: interpreter.id,
+        interpreterName: interpreter.name,
+        interpreterAvatar: interpreter.avatar,
         language: settings.primarySignLanguage,
         date: "Tomorrow",
         time: slot || "02:00 PM",
         durationMinutes: 45,
+        totalCost: Number(((interpreter.ratePerHour || 60) / 60 * 45).toFixed(2)),
         notes: `Appointment booked with ${interpreter.name}`
       });
-      const notifs = await api.getNotifications();
-      setNotifications(notifs);
     } catch (err) {
       console.error("Booking failed:", err);
     }
@@ -227,6 +229,16 @@ function App() {
             {activeTab === "resources" && <ResourceHubView
     settings={settings}
     onOpenTutorial={() => setIsTutorialOpen(true)}
+    onOpenDictionary={() => setActiveTab("dictionary")}
+  />}
+
+            {
+    /* Dedicated Sign Dictionary */
+  }
+            {activeTab === "dictionary" && <SignDictionaryView
+    settings={settings}
+    onNavigateToTranslate={() => setActiveTab("translate")}
+    onOpenTutorial={() => setIsTutorialOpen(true)}
   />}
 
             {
@@ -236,6 +248,14 @@ function App() {
     settings={settings}
     onUpdateSettings={handleUpdateSettings}
     onOpenErrorModal={(type) => setErrorModalType(type)}
+    onNavigateToProfile={() => setActiveTab("profile")}
+  />}
+
+            {
+    /* Dedicated User Profile & Preferences (with Auth State Guard & Firestore Sync) */
+  }
+            {activeTab === "profile" && <UserProfile
+    onOpenAuth={() => setIsAuthOpen(true)}
   />}
           </>}
       </main>
@@ -276,14 +296,17 @@ function App() {
   />
 
       <AuthModal
-    isOpen={isAuthOpen}
-    onClose={() => setIsAuthOpen(false)}
-    currentUser={user}
-    onUpdateUser={async (updated) => {
-      setUser(updated);
-      await api.updateUserProfile(updated);
-    }}
-  />
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        currentUser={user}
+        onUpdateUser={async (updated) => {
+          await updateUserProfile(updated);
+        }}
+        onNavigateToProfile={() => {
+          setIsAuthOpen(false);
+          setActiveTab("profile");
+        }}
+      />
 
       <NotificationsModal
     isOpen={isNotificationsOpen}

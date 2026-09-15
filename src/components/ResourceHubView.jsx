@@ -6,18 +6,42 @@ import {
   ThumbsUp,
   Eye,
   Sparkles,
-  HandMetal
+  HandMetal,
+  ArrowRight
 } from "lucide-react";
 import { MOCK_RESOURCES, COMMON_SIGNS, SIGN_ALPHABET } from "../data/mockData";
 import { speakText } from "../utils/speech";
+import { SignDictionaryView } from "./dictionary/SignDictionaryView";
+
 const ResourceHubView = ({
   settings,
-  onOpenTutorial
+  onOpenTutorial,
+  onOpenDictionary
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedLevel, setSelectedLevel] = useState("ALL");
   const [activeDictionarySign, setActiveDictionarySign] = useState(null);
+
+  if (selectedCategory === "dictionary") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between bg-white dark:bg-slate-800 p-3.5 px-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs">
+          <button
+            onClick={() => setSelectedCategory("all")}
+            className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1"
+          >
+            <span>&larr; Back to Video Academy & Lessons</span>
+          </button>
+          <span className="text-xs text-slate-400">Dictionary Mode</span>
+        </div>
+        <SignDictionaryView
+          settings={settings}
+          onOpenTutorial={onOpenTutorial}
+        />
+      </div>
+    );
+  }
   const filteredResources = MOCK_RESOURCES.filter((res) => {
     const matchesSearch = res.title.toLowerCase().includes(searchQuery.toLowerCase()) || res.description.toLowerCase().includes(searchQuery.toLowerCase()) || res.signsCovered.some((s) => s.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchesCategory = selectedCategory === "all" || res.category === selectedCategory;
@@ -47,13 +71,23 @@ const ResourceHubView = ({
           </p>
         </div>
 
-        <button
-    onClick={onOpenTutorial}
-    className="relative z-10 mt-5 sm:mt-0 px-4 py-2.5 rounded-2xl bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-cyan-500/25 transition-all"
-  >
-          <Sparkles className="w-4 h-4" />
-          <span>Launch 5-Parameter Interactive Guide</span>
-        </button>
+        <div className="relative z-10 mt-5 sm:mt-0 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => onOpenDictionary ? onOpenDictionary() : setSelectedCategory("dictionary")}
+            className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Open Interactive Sign Dictionary</span>
+          </button>
+
+          <button
+            onClick={onOpenTutorial}
+            className="px-4 py-2.5 rounded-2xl bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-cyan-500/25 transition-all cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>5-Parameter Guide</span>
+          </button>
+        </div>
       </div>
 
       {
@@ -100,7 +134,13 @@ const ResourceHubView = ({
               Instant {settings.primarySignLanguage} Sign Dictionary ({filteredSigns.length} Signs)
             </h2>
           </div>
-          <span className="text-xs text-slate-400">Click any sign to preview motion</span>
+          <button
+            onClick={() => onOpenDictionary ? onOpenDictionary() : setSelectedCategory("dictionary")}
+            className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1"
+          >
+            <span>Explore All Signs in Kinematics Studio</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">

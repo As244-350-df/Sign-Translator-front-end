@@ -1,4 +1,4 @@
-import { Camera, Keyboard, Video, Calendar, BookOpen, Settings, History, Briefcase } from "lucide-react";
+import { Camera, Keyboard, Video, Calendar, BookOpen, Settings, History, Briefcase, GraduationCap, User } from "lucide-react";
 const Navigation = ({
   activeTab,
   onChangeTab,
@@ -9,10 +9,10 @@ const Navigation = ({
   const navItems = [
     { id: "translate", label: "Translate", icon: Camera },
     { id: "keyboard", label: "Keyboard", icon: Keyboard },
+    { id: "dictionary", label: "Dictionary", icon: BookOpen },
     { id: "directory", label: "Interpreters", icon: Video },
     isInterpreter ? { id: "interpreter_dashboard", label: "Dashboard", icon: Briefcase } : { id: "schedule", label: "Schedule", icon: Calendar },
-    { id: "history", label: "History", icon: History },
-    { id: "resources", label: "Resources", icon: BookOpen },
+    { id: "profile", label: "Profile", icon: User },
     { id: "settings", label: "Settings", icon: Settings }
   ];
   return <div className={`md:hidden fixed bottom-0 left-0 right-0 z-40 border-t transition-colors duration-200 ${settings.darkTheme ? "bg-slate-900/95 border-slate-800 backdrop-blur-lg" : "bg-white/95 border-slate-200 backdrop-blur-lg"}`}>

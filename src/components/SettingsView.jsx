@@ -9,16 +9,20 @@ import {
   Zap,
   Sparkles,
   Radio,
-  Cpu
+  Cpu,
+  User,
+  ArrowRight
 } from "lucide-react";
 import { SIGN_LANGUAGES } from "../data/mockData";
 import { speakText } from "../utils/speech";
 import { PHYSICS_PRESETS } from "../utils/handTracker";
 import { aiStreamRecognizer } from "../utils/aiStreamRecognizer";
+
 const SettingsView = ({
   settings,
   onUpdateSettings,
-  onOpenErrorModal
+  onOpenErrorModal,
+  onNavigateToProfile
 }) => {
   const [savedSuccess, setSavedSuccess] = useState(false);
   const handleSave = () => {
@@ -45,10 +49,23 @@ const SettingsView = ({
           </p>
         </div>
 
-        {savedSuccess && <div className="px-3.5 py-1.5 rounded-full bg-emerald-500 text-white text-xs font-bold flex items-center space-x-1.5 animate-in fade-in shadow-xs">
+        <div className="flex items-center space-x-2">
+          {onNavigateToProfile && (
+            <button
+              onClick={onNavigateToProfile}
+              className="px-3.5 py-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold hover:bg-indigo-100 transition-colors flex items-center space-x-1.5 cursor-pointer"
+            >
+              <User className="w-4 h-4" />
+              <span>Manage User Profile</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {savedSuccess && <div className="px-3.5 py-1.5 rounded-full bg-emerald-500 text-white text-xs font-bold flex items-center space-x-1.5 animate-in fade-in shadow-xs">
             <Check className="w-3.5 h-3.5" />
             <span>Preferences Saved</span>
           </div>}
+        </div>
       </div>
 
       {

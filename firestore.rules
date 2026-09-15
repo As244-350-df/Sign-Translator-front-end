@@ -7,6 +7,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Connection test rule
+    match /test/{testId} {
+      allow read: if true;
+    }
+
     // Helper functions
     function isSignedIn() {
       return request.auth != null;
@@ -48,7 +53,7 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidUserProfile(incoming());
       allow update: if isOwner(userId) && isValidUserProfile(incoming())
         && incoming().userId == existing().userId
-        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'avatar', 'primaryLanguage', 'secondaryLanguage', 'bio', 'availableStatus', 'updatedAt', 'rating', 'totalHours', 'certifications', 'hourlyRate']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'email', 'avatar', 'primaryLanguage', 'secondaryLanguage', 'bio', 'availableStatus', 'updatedAt', 'rating', 'totalHours', 'certifications', 'hourlyRate', 'verified', 'preferences']);
       allow delete: if isOwner(userId) || isAdmin();
 
       // Private Settings & PII Isolation
@@ -60,6 +65,16 @@ service cloud.firestore {
       match /notifications/{notificationId} {
         allow read, update, delete: if isOwner(userId);
         allow create: if isSignedIn();
+      }
+
+      // User Bookmarks & Saved Vocabulary
+      match /bookmarks/{bookmarkId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User Bookings
+      match /bookings/{bookingId} {
+        allow read, write: if isOwner(userId) || isAdmin();
       }
     }
 

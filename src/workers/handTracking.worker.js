@@ -470,9 +470,9 @@ function processFrameInWorker(bitmap, timestamp, width, height, forceDetection, 
       const safeTimestamp = Math.max(Math.round(now), Math.round(lastMediaPipeTimestamp + 4));
       lastMediaPipeTimestamp = safeTimestamp;
 
-      // Downsample using OffscreenCanvas if available
+      // If already downscaled (<= 384px), pass bitmap directly to avoid extra drawImage copy
       let detectTarget = bitmap;
-      if (typeof OffscreenCanvas !== "undefined") {
+      if (bitmap.width > DOWNSAMPLE_WIDTH && typeof OffscreenCanvas !== "undefined") {
         if (!offscreenCanvas) {
           offscreenCanvas = new OffscreenCanvas(DOWNSAMPLE_WIDTH, DOWNSAMPLE_HEIGHT);
           offscreenCtx = offscreenCanvas.getContext("2d");
@@ -539,11 +539,15 @@ function processFrameInWorker(bitmap, timestamp, width, height, forceDetection, 
       }
     } catch (err) {
       // Non-fatal vision detection error
+    } finally {
+      // Free bitmap GPU buffer immediately
+      if (bitmap && typeof bitmap.close === "function") {
+        try {
+          bitmap.close();
+        } catch {}
+      }
     }
-  }
-
-  // Close input bitmap to free GPU memory immediately
-  if (bitmap && typeof bitmap.close === "function") {
+  } else if (bitmap && typeof bitmap.close === "function") {
     try {
       bitmap.close();
     } catch {}

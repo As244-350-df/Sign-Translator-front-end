@@ -12,14 +12,26 @@ import {
   RotateCw
 } from "lucide-react";
 import { api } from "../utils/api";
+import { useFirebase } from "../context/FirebaseContext";
+
 const SessionHistoryView = ({
   settings,
   onSelectSession
 }) => {
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { sessions: contextSessions, isAuthenticated } = useFirebase();
+  const [sessions, setSessions] = useState(contextSessions || []);
+  const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+
+  useEffect(() => {
+    if (contextSessions && contextSessions.length > 0) {
+      setSessions(contextSessions);
+    } else {
+      fetchSessions();
+    }
+  }, [contextSessions]);
+
   const fetchSessions = async () => {
     setLoading(true);
     try {
@@ -31,9 +43,6 @@ const SessionHistoryView = ({
       setLoading(false);
     }
   };
-  useEffect(() => {
-    fetchSessions();
-  }, []);
   const filteredHistory = sessions.filter((item) => {
     const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || item.summary.toLowerCase().includes(searchQuery.toLowerCase()) || item.keyTerms.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase())) || item.interpreterName && item.interpreterName.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType = typeFilter === "all" || item.type === typeFilter;

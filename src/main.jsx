@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.jsx";
+import { AuthProvider } from "./context/AuthContext.jsx";
+import { FirebaseProvider } from "./context/FirebaseContext.jsx";
 import "./index.css";
 
 // Intercept and prevent benign Vite HMR websocket connection errors from bubbling up
@@ -35,7 +37,11 @@ if (typeof window !== "undefined") {
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <AuthProvider>
+        <FirebaseProvider>
+          <App />
+        </FirebaseProvider>
+      </AuthProvider>
     </ErrorBoundary>
   </StrictMode>
 );

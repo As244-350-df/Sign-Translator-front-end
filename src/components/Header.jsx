@@ -9,8 +9,11 @@ import {
   ShieldCheck,
   Camera,
   Video,
-  Layers
+  Layers,
+  BookOpen,
+  Cloud
 } from "lucide-react";
+import { useFirebase } from "../context/FirebaseContext";
 const Header = ({
   user,
   settings,
@@ -106,10 +109,26 @@ const Header = ({
             </button>
 
             <button
+    onClick={() => onChangeTab("dictionary")}
+    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-1.5 ${activeTab === "dictionary" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 shadow-xs" : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"}`}
+  >
+              <BookOpen className="w-4 h-4" />
+              <span>Dictionary</span>
+            </button>
+
+            <button
     onClick={() => onChangeTab("resources")}
     className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === "resources" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 shadow-xs" : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"}`}
   >
               Resources
+            </button>
+
+            <button
+              onClick={() => onChangeTab("profile")}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-1.5 ${activeTab === "profile" ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 shadow-xs" : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"}`}
+            >
+              <User className="w-4 h-4" />
+              <span>Profile</span>
             </button>
           </nav>
 
@@ -184,20 +203,27 @@ const Header = ({
                 </span>}
             </button>
 
-            {
-    /* Profile Avatar / Login */
-  }
+            {/* Profile Avatar / Tab */}
             <button
-    onClick={onOpenAuth}
-    className="flex items-center space-x-2 pl-1.5 pr-2 py-1 rounded-full border border-slate-200 dark:border-slate-700 hover:ring-2 hover:ring-indigo-500/30 transition-all"
-  >
-              <img
-    src={user.avatar}
-    alt={user.name}
-    className="w-7 h-7 rounded-full object-cover ring-1 ring-indigo-500/40"
-  />
+              id="btn-header-profile-avatar"
+              onClick={() => onChangeTab("profile")}
+              className={`flex items-center space-x-2 pl-1.5 pr-2 py-1 rounded-full border transition-all cursor-pointer relative ${
+                activeTab === "profile"
+                  ? "border-indigo-500 ring-2 ring-indigo-500/30 bg-indigo-50 dark:bg-indigo-950/40"
+                  : "border-slate-200 dark:border-slate-700 hover:ring-2 hover:ring-indigo-500/30"
+              }`}
+              title={user?.email ? `Signed in as ${user.email} - View Profile` : "View Profile & Settings"}
+            >
+              <div className="relative">
+                <img
+                  src={user?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250"}
+                  alt={user?.name || "User"}
+                  className="w-7 h-7 rounded-full object-cover ring-1 ring-indigo-500/40"
+                />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" title="Firestore Connected" />
+              </div>
               <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 hidden lg:inline max-w-[100px] truncate">
-                {user.name}
+                {user?.name || "Profile"}
               </span>
             </button>
           </div>

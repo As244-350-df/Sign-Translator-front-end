@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { AlertTriangle, ExternalLink, HelpCircle, HandMetal } from "lucide-react";
+import { AlertTriangle, ExternalLink, HelpCircle, HandMetal, Camera, Sliders, Video } from "lucide-react";
 import { SIGN_LANGUAGES } from "../data/mockData";
 import { speakText, SpeechToSignListener } from "../utils/speech";
 import { SIGN_DICTIONARY } from "../utils/handTracker";
@@ -13,6 +13,7 @@ import { SignLanguageAvatar } from "./SignLanguageAvatar";
 import { VideoSourcePanel } from "./VideoSourcePanel";
 import { isInsideIframe, getSafeCurrentUrl } from "../utils/environment";
 import { useCameraHandTracking } from "../hooks/useCameraHandTracking";
+import { CameraGestureCapture } from "./CameraGestureCapture";
 
 import { LiveTranslateHeader } from "./live-translate/LiveTranslateHeader";
 import { SignDictionaryPanel } from "./live-translate/SignDictionaryPanel";
@@ -29,6 +30,7 @@ export const LiveTranslateView = ({
   onOpenTutorial
 }) => {
   const [translationMode, setTranslationMode] = useState("sign_to_text");
+  const [cameraViewMode, setCameraViewMode] = useState("direct_camera");
   const [isCameraActive, setIsCameraActive] = useState(true);
   const [showDiagnosticsOverlay, setShowDiagnosticsOverlay] = useState(false);
   const [isDarkFeedWarning] = useState(false);
@@ -279,7 +281,45 @@ export const LiveTranslateView = ({
       {translationMode === "sign_to_text" ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 flex flex-col space-y-4">
-            <VideoSourcePanel
+            {/* Camera View Mode Selector */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1.5 p-1 bg-slate-900 rounded-2xl border border-slate-800">
+                <button
+                  onClick={() => setCameraViewMode("direct_camera")}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    cameraViewMode === "direct_camera"
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Direct Gesture Camera</span>
+                </button>
+                <button
+                  onClick={() => setCameraViewMode("studio")}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    cameraViewMode === "studio"
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Video Studio & 3D Lab</span>
+                </button>
+              </div>
+            </div>
+
+            {cameraViewMode === "direct_camera" ? (
+              <CameraGestureCapture
+                onSignDetected={handleRecognizedDetection}
+                onSentenceUpdate={(s) => setFullSentence(s)}
+                activeSignLanguage={settings.primarySignLanguage || "ASL"}
+                autoStart={true}
+                autoSpeak={settings.autoSpeak}
+              />
+            ) : (
+              <>
+                <VideoSourcePanel
               inputMode={tracking.inputSourceMode}
               onSelectMode={tracking.handleSelectInputMode}
               onUploadVideo={tracking.handleUploadVideo}
@@ -408,8 +448,10 @@ export const LiveTranslateView = ({
                 onSwitchBackend={handleSwitchBackend}
               />
             </div>
+          </>
+        )}
 
-            <SignDictionaryPanel
+        <SignDictionaryPanel
               dictionaryList={dictionaryList}
               filteredDictionary={filteredDictionary}
               selectedSignCategory={selectedSignCategory}

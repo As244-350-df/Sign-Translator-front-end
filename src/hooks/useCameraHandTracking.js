@@ -383,11 +383,31 @@ export const useCameraHandTracking = ({
       requestCameraAccess(false);
     } else if (!isCameraActive || !useRealWebcam) {
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => (t.enabled = false));
+        try {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {}
+        mediaStreamRef.current = null;
       }
       setCameraStreamStatus("idle");
     }
   }, [isCameraActive, useRealWebcam, inputSourceMode]);
+
+  // Cleanup camera stream hardware on hook unmount
+  useEffect(() => {
+    return () => {
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+          mediaStreamRef.current = null;
+        } catch {}
+      }
+      if (uploadedVideoUrl) {
+        try {
+          URL.revokeObjectURL(uploadedVideoUrl);
+        } catch {}
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (useRealWebcam && inputSourceMode === "webcam" && videoRef.current && mediaStreamRef.current) {
@@ -405,12 +425,7 @@ export const useCameraHandTracking = ({
     if (!isCameraActive) return;
     let isCancelled = false;
 
-    // 1. Trigger hardware camera acquisition if webcam mode
-    if (useRealWebcam && inputSourceMode === "webcam") {
-      requestCameraAccess(false).catch(() => {});
-    }
-
-    // 2. Immediate AI Stream Connection (concurrently)
+    // 1. Immediate AI Stream Connection (concurrently)
     const initAI = async () => {
       try {
         await aiStreamRecognizer.initialize();
@@ -445,16 +460,23 @@ export const useCameraHandTracking = ({
       } catch {}
     };
 
-    // 3. Connect MediaPipe Vision Neural Engine (concurrently with 2.2s ceiling)
+    // 2. Connect MediaPipe Vision Neural Engine (preferring Web Worker to keep main thread completely unblocked)
     const initMediaPipe = async () => {
       try {
         if (handTrackerRef.current?.initWorker) {
           handTrackerRef.current.initWorker();
         }
-        await Promise.race([
-          mediaPipeTracker.initialize(),
-          new Promise((resolve) => setTimeout(resolve, 2200))
-        ]);
+        let workerReady = false;
+        if (handTrackerRef.current?.waitForWorkerReady) {
+          workerReady = await handTrackerRef.current.waitForWorkerReady(1600);
+        }
+        // Only load main-thread WASM if worker is unavailable
+        if (!workerReady) {
+          await Promise.race([
+            mediaPipeTracker.initialize(),
+            new Promise((resolve) => setTimeout(resolve, 2000))
+          ]);
+        }
         if (isCancelled) return;
 
         setResourceStatus((prev) => ({
@@ -646,6 +668,7 @@ export const useCameraHandTracking = ({
 
         if (currentMode === "webcam" && currentStatus !== "active") {
           if (videoRef.current && videoRef.current.readyState >= 2 && !videoRef.current.paused) {
+            cameraStreamStatusRef.current = "active";
             setCameraStreamStatus("active");
           } else {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -684,7 +707,6 @@ export const useCameraHandTracking = ({
           if (geminiTranslationEnabledRef.current && !isTranslatingRef.current && (currentNow - lastTranslationTimeRef.current > translationInterval)) {
             isTranslatingRef.current = true;
             lastTranslationTimeRef.current = currentNow;
-            setIsGeminiStreaming(true);
 
             geminiService.translateLandmarks({
               landmarks: detection.landmarks,
@@ -696,8 +718,6 @@ export const useCameraHandTracking = ({
               signLanguage: settingsRef.current.primarySignLanguage || "ASL"
             }).then((res) => {
               isTranslatingRef.current = false;
-              setIsGeminiStreaming(false);
-              setLastGeminiTranslation(res);
               if (res?.label) {
                 const tag = res.fallbackActive ? " [AI Engine]" : "";
                 const meaning = res.englishTranslation || res.translation || "";
@@ -706,7 +726,6 @@ export const useCameraHandTracking = ({
               }
             }).catch(() => {
               isTranslatingRef.current = false;
-              setIsGeminiStreaming(false);
             });
           }
         }

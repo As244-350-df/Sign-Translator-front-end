@@ -742,6 +742,17 @@ class RealtimeHandTracker {
     };
   }
 
+  waitForWorkerReady(timeoutMs = 2500) {
+    if (this.workerReady) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(this.workerReady), timeoutMs);
+      const unsubscribe = this.onWorkerReady(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
   constructor() {
     if (!RealtimeHandTracker.instance) {
       RealtimeHandTracker.instance = this;
@@ -799,6 +810,8 @@ class RealtimeHandTracker {
             if (data.detection.isRealHandDetected) {
               this.isRealHandDetected = true;
               this.lastHandSeenTime = performance.now();
+            } else {
+              this.isRealHandDetected = false;
             }
           }
         }
@@ -1128,13 +1141,41 @@ class RealtimeHandTracker {
     let mpAllHands = [];
     let mpHandedness = "Right";
 
+    // Watchdog: If worker got stuck for > 400ms without response, reset busy flag
+    if (this.isWorkerBusy && (now - (this.workerPostTime || 0) > 400)) {
+      this.isWorkerBusy = false;
+    }
+
     // 1. Offload frame to Web Worker asynchronously (zero main-thread blocking)
+    // Throttled to ~22 FPS (45ms) or forceDetection to keep CPU/GPU cool and prevent memory spikes
+    const workerThrottleMs = 45;
+    const canSendToWorker = forceDetection || (now - (this.lastWorkerSendTime || 0) >= workerThrottleMs);
+
     if (this.worker && this.workerReady && this.videoElement && this.videoElement.readyState >= 2) {
-      if (!this.isWorkerBusy && typeof createImageBitmap === "function") {
+      if (!this.isWorkerBusy && canSendToWorker && typeof createImageBitmap === "function") {
         this.isWorkerBusy = true;
-        createImageBitmap(this.videoElement).then((bitmap) => {
-          if (!this.worker) {
-            try { bitmap.close(); } catch {}
+        this.workerPostTime = now;
+        this.lastWorkerSendTime = now;
+
+        // Downscale capture via browser hardware directly to 384x288
+        // Reduces memory transfer across worker boundary by ~88% compared to raw 1280x720
+        const capturePromise = (async () => {
+          try {
+            return await createImageBitmap(this.videoElement, {
+              resizeWidth: 384,
+              resizeHeight: 288,
+              resizeQuality: "low"
+            });
+          } catch {
+            return await createImageBitmap(this.videoElement);
+          }
+        })();
+
+        capturePromise.then((bitmap) => {
+          if (!this.worker || !bitmap) {
+            if (bitmap && typeof bitmap.close === "function") {
+              try { bitmap.close(); } catch {}
+            }
             this.isWorkerBusy = false;
             return;
           }
@@ -1154,14 +1195,16 @@ class RealtimeHandTracker {
       }
     }
 
-    // 2. If Web Worker has provided detection results WITH A REAL DETECTED HAND, utilize them directly
-    if (this.workerReady && this.latestWorkerDetection && this.latestWorkerDetection.isRealHandDetected) {
+    // 2. If Web Worker is active and has provided detection results, utilize them directly (ZERO main-thread blocking)
+    if (this.workerReady && this.latestWorkerDetection) {
       const d = this.latestWorkerDetection;
-      const isFresh = (now - (this.lastWorkerResultTime || now)) < 1200;
+      const isFresh = (now - (this.lastWorkerResultTime || now)) < 1500;
       if (isFresh) {
-        hasRealHand = true;
-        this.isRealHandDetected = true;
-        this.lastHandSeenTime = now;
+        const isReal = !!d.isRealHandDetected;
+        this.isRealHandDetected = isReal;
+        if (isReal) {
+          this.lastHandSeenTime = now;
+        }
 
         if (d.landmarks && d.landmarks.length >= 21) {
           this.smoothedLandmarks = d.landmarks;
@@ -1191,18 +1234,18 @@ class RealtimeHandTracker {
             confidence: d.confidence || 0.95
           }],
           fps: Math.min(60, Math.max(24, this.fps)),
-          isRealHandDetected: true,
+          isRealHandDetected: isReal,
           holdProgress: d.holdProgress || 0,
           isCommitted: !!d.isCommitted,
           fingerPose: { ...this.smoothedPose },
           autoCentering: {
             enabled: this.autoCenterEnabled,
-            isTracking: this.autoCenterEnabled,
+            isTracking: this.autoCenterEnabled && isReal,
             currentZoom: +this.zoomLevel.toFixed(2),
             panOffsetX: +this.panOffsetX.toFixed(2),
             panOffsetY: +this.panOffsetY.toFixed(2),
-            handFramedScore: 95,
-            statusText: "Worker Vision Active (Lag-Free)"
+            handFramedScore: isReal ? 95 : 20,
+            statusText: isReal ? "Worker Vision Active (Real Hand)" : "Worker Vision Active (Searching)"
           },
           physicsTelemetry: { ...this.physicsTelemetry },
           aiStreamTelemetry: this.getAIStreamTelemetry(),
@@ -1216,11 +1259,12 @@ class RealtimeHandTracker {
       }
     }
 
-    // 3. Fallback / Main-Thread Inference: Runs whenever Web Worker did not detect a hand
-    if (this.videoElement && this.videoElement.readyState >= 2) {
-      try {
-        const isMirrored = this.isMirrored !== false;
-        const mpResult = mediaPipeTracker.processVideoFrame(this.videoElement, width, height, timestamp, forceDetection, isMirrored);
+    // 3. Fallback / Main-Thread Inference: ONLY runs if Web Worker is NOT initialized or failed
+    if (!this.workerReady && this.videoElement && this.videoElement.readyState >= 2) {
+      if (forceDetection) {
+        try {
+          const isMirrored = this.isMirrored !== false;
+          const mpResult = mediaPipeTracker.processVideoFrame(this.videoElement, width, height, timestamp, forceDetection, isMirrored);
         if (mpResult && mpResult.hasHand && mpResult.landmarks && mpResult.landmarks.length >= 21) {
           hasRealHand = true;
           this.isRealHandDetected = true;
@@ -1261,6 +1305,7 @@ class RealtimeHandTracker {
       } catch (e) {
         console.warn("[RealtimeHandTracker] MediaPipe frame error:", e);
       }
+    }
     }
     if (!hasRealHand && this.autoCenterEnabled) {
       if (performance.now() - this.lastHandSeenTime > 3500) {

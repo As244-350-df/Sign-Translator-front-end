@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Film, HandMetal, Camera, CameraOff, Sparkles, X } from "lucide-react";
 import { CameraStreamErrorOverlay } from "./CameraStreamErrorOverlay";
 import { CameraZoomFramingMenu } from "./CameraZoomFramingMenu";
@@ -21,6 +22,18 @@ export const CameraFeedStage = ({
   onResetZoom,
   onPanNudge
 }) => {
+  // Synchronize media stream to video element safely without re-triggering DOM thrashing
+  useEffect(() => {
+    const video = tracking.videoRef.current;
+    const stream = tracking.mediaStreamRef?.current;
+    if (video && stream && video.srcObject !== stream) {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.srcObject = stream;
+      video.play().catch(() => {});
+    }
+  }, [tracking.cameraStreamStatus, tracking.inputSourceMode]);
+
   return (
     <div className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center">
       {tracking.cameraNoticeMessage && tracking.inputSourceMode === "webcam" && (
@@ -72,20 +85,7 @@ export const CameraFeedStage = ({
           >
             {tracking.inputSourceMode !== "simulator" && (
               <video
-                ref={(el) => {
-                  tracking.videoRef.current = el;
-                  if (el && tracking.mediaStreamRef?.current) {
-                    if (el.srcObject !== tracking.mediaStreamRef.current) {
-                      el.muted = true;
-                      el.defaultMuted = true;
-                      el.setAttribute("muted", "");
-                      el.setAttribute("playsinline", "true");
-                      el.setAttribute("webkit-playsinline", "true");
-                      el.srcObject = tracking.mediaStreamRef.current;
-                      el.play().catch(() => {});
-                    }
-                  }
-                }}
+                ref={tracking.videoRef}
                 autoPlay
                 muted
                 playsInline
