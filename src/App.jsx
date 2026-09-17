@@ -21,6 +21,8 @@ import { SystemErrorModal } from "./components/SystemErrorModal";
 import { ExportZipModal } from "./components/ExportZipModal";
 import { ArchitectureInspectorModal } from "./components/ArchitectureInspectorModal";
 import { LoadingOverlay } from "./components/LoadingOverlay";
+import { IncomingCallGlobalAlert } from "./components/IncomingCallGlobalAlert";
+import { JoinRoomModal } from "./components/JoinRoomModal";
 import {
   INITIAL_USER,
   INITIAL_SETTINGS,
@@ -37,6 +39,7 @@ function App() {
     notifications,
     firebaseUser,
     isAuthenticated,
+    interpreters,
     updateUserProfile,
     updateUserSettings,
     recordSession,
@@ -55,6 +58,29 @@ function App() {
   const [isExportZipOpen, setIsExportZipOpen] = useState(false);
   const [isArchitectureOpen, setIsArchitectureOpen] = useState(false);
   const [errorModalType, setErrorModalType] = useState(null);
+  const [initialCallPerspective, setInitialCallPerspective] = useState(null);
+  const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sessionParam = params.get("session") || params.get("call");
+      const roleParam = params.get("role");
+      const tabParam = params.get("tab");
+      if (sessionParam) {
+        setActiveCallInterpreterId(sessionParam);
+        if (roleParam === "interpreter" || roleParam === "client") {
+          setInitialCallPerspective(roleParam);
+        }
+        setIsCallActive(true);
+      }
+      if (tabParam) {
+        setActiveTab(tabParam);
+      }
+    } catch (err) {
+      console.warn("URL params parse warning:", err);
+    }
+  }, []);
 
   useEffect(() => {
     if (settings.darkTheme) {
@@ -78,16 +104,21 @@ function App() {
     }
   };
 
-  const handleStartCall = (interpreterId = "int-01") => {
-    setActiveCallInterpreterId(interpreterId);
+  const handleStartCall = (roomIdOrInterpreterId = "int-01", role = null) => {
+    setActiveCallInterpreterId(roomIdOrInterpreterId);
+    if (role) {
+      setInitialCallPerspective(role);
+    }
     setIsCallActive(true);
   };
 
   const handleEndCall = async () => {
     setIsCallActive(false);
-    const currentInterpreter = MOCK_INTERPRETERS.find((i) => i.id === activeCallInterpreterId) || MOCK_INTERPRETERS[0];
+    const currentInterpreter = interpreters?.find(
+      (i) => i.id === activeCallInterpreterId || i.interpreterId === activeCallInterpreterId
+    ) || MOCK_INTERPRETERS.find((i) => i.id === activeCallInterpreterId) || MOCK_INTERPRETERS[0];
     const liveTranscript = [
-      { speaker: "Interpreter", time: "00:05", text: `Connected with ${currentInterpreter.name}. Translation active.` },
+      { speaker: "Interpreter", time: "00:05", text: `Connected with ${currentInterpreter.name}. Real-time interpretation active.` },
       { speaker: "Signer", time: "00:20", text: "Thank you for interpreting today. We covered prescription timings and follow-up lab dates." },
       { speaker: "Speaker", time: "00:45", text: "Everything looks great on the health metrics. Maintain current activity and routine." },
       { speaker: "Interpreter", time: "01:10", text: "Session concluding with verified mutual understanding." }
@@ -120,15 +151,16 @@ function App() {
   const handleBookSlot = async (interpreter, slot) => {
     try {
       await addBooking({
-        interpreterId: interpreter.id,
+        interpreterId: interpreter.id || interpreter.interpreterId,
         interpreterName: interpreter.name,
         interpreterAvatar: interpreter.avatar,
-        language: settings.primarySignLanguage,
+        clientName: user?.name || "Client",
+        language: settings.primarySignLanguage || "ASL",
         date: "Tomorrow",
         time: slot || "02:00 PM",
         durationMinutes: 45,
-        totalCost: Number(((interpreter.ratePerHour || 60) / 60 * 45).toFixed(2)),
-        notes: `Appointment booked with ${interpreter.name}`
+        totalCost: Number((((interpreter.ratePerHour || 65) / 60) * 45).toFixed(2)),
+        notes: `Scheduled appointment with ${interpreter.name}`
       });
     } catch (err) {
       console.error("Booking failed:", err);
@@ -153,6 +185,8 @@ function App() {
     onOpenAuth={() => setIsAuthOpen(true)}
     onOpenExportZip={() => setIsExportZipOpen(true)}
     onOpenArchitecture={() => setIsArchitectureOpen(true)}
+    onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
+    onStartLiveCall={() => handleStartCall("room-4927")}
     isCallActive={isCallActive}
   />
 
@@ -164,6 +198,7 @@ function App() {
     /* Live 2-Way Human Sign Language Interpreter Video Room */
     <LiveSessionCallView
       interpreterId={activeCallInterpreterId}
+      initialPerspective={initialCallPerspective}
       onEndCall={handleEndCall}
       settings={settings}
     />
@@ -212,7 +247,7 @@ function App() {
             {activeTab === "interpreter_dashboard" && <InterpreterDashboardView
     user={user}
     settings={settings}
-    onAcceptIncomingCall={() => handleStartCall()}
+    onAcceptIncomingCall={(call) => handleStartCall(call?.meetingRoomId || call?.sessionId || call?.interpreterId || "int-01", "interpreter")}
   />}
 
             {
@@ -339,6 +374,21 @@ function App() {
     isOpen={isArchitectureOpen}
     onClose={() => setIsArchitectureOpen(false)}
   />
+
+      {/* Global Real-Time Incoming Call Alert */}
+      <IncomingCallGlobalAlert
+        currentUserId={user?.userId || user?.id || firebaseUser?.uid}
+        currentUserName={user?.name || "Participant"}
+        isCallActive={isCallActive}
+        onAcceptCall={(call) => handleStartCall(call?.meetingRoomId || call?.sessionId || call?.interpreterId || "int-01", "interpreter")}
+      />
+
+      {/* Cross-Device Join Room Modal */}
+      <JoinRoomModal
+        isOpen={isJoinRoomOpen}
+        onClose={() => setIsJoinRoomOpen(false)}
+        onJoinRoom={(roomId, role) => handleStartCall(roomId, role)}
+      />
 
       {/* Full-Screen System Initialization Overlay */}
       <LoadingOverlay />

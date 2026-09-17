@@ -16,18 +16,44 @@ import {
   ListTodo
 } from "lucide-react";
 const SessionReviewModal = ({
-  session,
+  session: rawSession,
   isOpen,
   onClose,
   settings
 }) => {
   const [copied, setCopied] = useState(false);
-  const [userRating, setUserRating] = useState(session?.rating || 5);
-  const [feedbackNotes, setFeedbackNotes] = useState(session?.notes || "");
+  const [userRating, setUserRating] = useState(rawSession?.rating || 5);
+  const [feedbackNotes, setFeedbackNotes] = useState(rawSession?.notes || "");
   const [activeTab, setActiveTab] = useState("transcript");
-  if (!isOpen || !session) return null;
+
+  if (!isOpen || !rawSession) return null;
+
+  const session = {
+    ...rawSession,
+    id: rawSession.id || rawSession.sessionId || "sess-record",
+    title: rawSession.title || "Live Translation Record",
+    date: rawSession.date || (rawSession.createdAt ? new Date(rawSession.createdAt).toLocaleDateString() : "Recent"),
+    duration: rawSession.duration || (rawSession.durationMinutes ? `${rawSession.durationMinutes} mins` : "15m 00s"),
+    language: rawSession.language || "ASL",
+    summary: rawSession.summary || "Completed session record.",
+    fullTranscript: Array.isArray(rawSession.fullTranscript) && rawSession.fullTranscript.length > 0
+      ? rawSession.fullTranscript
+      : Array.isArray(rawSession.transcript) && rawSession.transcript.length > 0
+      ? rawSession.transcript
+      : [
+          {
+            speaker: rawSession.interpreterName ? "Interpreter" : "AI Vision",
+            time: "00:00",
+            text: rawSession.summary || "Session initiated and completed."
+          }
+        ],
+    keyTerms: Array.isArray(rawSession.keyTerms) && rawSession.keyTerms.length > 0
+      ? rawSession.keyTerms
+      : ["Live Translation", rawSession.language || "ASL"]
+  };
+
   const handleCopyTranscript = () => {
-    const text = session.fullTranscript.map((t) => `[${t.time}] ${t.speaker}: ${t.text}`).join("\n");
+    const text = (session.fullTranscript || []).map((t) => `[${t.time || "00:00"}] ${t.speaker || "Speaker"}: ${t.text || ""}`).join("\n");
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2e3);
@@ -44,12 +70,12 @@ CLINICAL / BUSINESS SUMMARY:
 ${session.summary}
 
 ACTION ITEMS & KEY VOCABULARY:
-${session.keyTerms.map((t) => `\u2022 ${t}`).join("\n")}
+${(session.keyTerms || []).map((t) => `• ${t}`).join("\n")}
 
 =======================================
 DIARIZED CONVERSATION TRANSCRIPT:
 =======================================
-${session.fullTranscript.map((t) => `[${t.time}] ${t.speaker}: ${t.text}`).join("\n")}
+${(session.fullTranscript || []).map((t) => `[${t.time || "00:00"}] ${t.speaker || "Speaker"}: ${t.text || ""}`).join("\n")}
 
 Signed & Encrypted via SignLink WebRTC & Gemini Multimodal Suite
 `;

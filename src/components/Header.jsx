@@ -26,6 +26,8 @@ const Header = ({
   onOpenAuth,
   onOpenExportZip,
   onOpenArchitecture,
+  onOpenJoinRoom,
+  onStartLiveCall,
   isCallActive = false
 }) => {
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -136,7 +138,26 @@ const Header = ({
     /* Right Action Icons & Profile */
   }
           <div className="flex items-center space-x-2 sm:space-x-3">
-            
+            {/* Direct Live Session Entry */}
+            <button
+              onClick={() => {
+                if (onStartLiveCall) {
+                  onStartLiveCall();
+                } else if (onOpenJoinRoom) {
+                  onOpenJoinRoom();
+                }
+              }}
+              title={isCallActive ? "Live Session Active" : "Start Live Session (Direct Video & Socket Translation)"}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all active:scale-95 cursor-pointer ${
+                isCallActive
+                  ? "bg-emerald-600 text-white ring-2 ring-emerald-400"
+                  : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+              }`}
+            >
+              <Video className="w-3.5 h-3.5" />
+              <span>Live Session</span>
+            </button>
+
             {
     /* Architecture Telemetry Button */
   }

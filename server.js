@@ -1,11 +1,285 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import dotenv from "dotenv";
+import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 dotenv.config();
 const app = express();
 const PORT = 3000;
+const httpServer = http.createServer(app);
+
+// ========================================================
+// Real-Time Live Session WebSocket Signaling & Video Relay
+// Supports WebRTC exchange, peer presence, media status,
+// and low-latency video frame stream between users in room
+// ========================================================
+const callRooms = new Map(); // roomId -> Set of client objects
+
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: "/ws/call",
+  maxPayload: 10 * 1024 * 1024 // 10MB to comfortably support video frames & audio buffers
+});
+
+function broadcastToRoom(roomId, message, senderWs = null) {
+  const room = callRooms.get(roomId);
+  if (!room) return;
+  const payload = typeof message === "string" ? message : JSON.stringify(message);
+  for (const client of room) {
+    if (client.ws !== senderWs && client.ws.readyState === WebSocket.OPEN) {
+      try {
+        client.ws.send(payload);
+      } catch (err) {
+        console.warn("[WS] Send error to peer:", err?.message);
+      }
+    }
+  }
+}
+
+wss.on("connection", (ws, req) => {
+  let currentClient = null;
+
+  ws.isAlive = true;
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+
+  ws.on("message", (raw) => {
+    try {
+      const data = JSON.parse(raw.toString());
+      const { type, roomId, senderId } = data;
+
+      switch (type) {
+        case "JOIN_ROOM": {
+          const roomKey = roomId || "default-call-room";
+          if (!callRooms.has(roomKey)) {
+            callRooms.set(roomKey, new Set());
+          }
+          const room = callRooms.get(roomKey);
+
+          currentClient = {
+            ws,
+            senderId: senderId || `user-${Date.now()}`,
+            roomId: roomKey,
+            role: data.role || "client",
+            userInfo: data.userInfo || {},
+            mediaStatus: data.mediaStatus || { isMuted: false, isCameraOff: false, isHandRaised: false },
+            joinedAt: Date.now()
+          };
+          room.add(currentClient);
+
+          console.log(`[WS] Peer joined room ${roomKey}. Total in room: ${room.size} (Role: ${currentClient.role})`);
+
+          // Send current peers in room to newly joined user
+          const existingPeers = Array.from(room)
+            .filter((c) => c.senderId !== currentClient.senderId)
+            .map((c) => ({
+              senderId: c.senderId,
+              role: c.role,
+              userInfo: c.userInfo,
+              mediaStatus: c.mediaStatus
+            }));
+
+          ws.send(
+            JSON.stringify({
+              type: "ROOM_PEERS",
+              roomId: roomKey,
+              senderId: currentClient.senderId,
+              peers: existingPeers,
+              totalInRoom: room.size
+            })
+          );
+
+          // Broadcast arrival to all other peers in room
+          broadcastToRoom(
+            roomKey,
+            {
+              type: "PEER_JOINED",
+              roomId: roomKey,
+              peer: {
+                senderId: currentClient.senderId,
+                role: currentClient.role,
+                userInfo: currentClient.userInfo,
+                mediaStatus: currentClient.mediaStatus
+              },
+              totalInRoom: room.size
+            },
+            ws
+          );
+          break;
+        }
+
+        case "WEBRTC_OFFER":
+        case "WEBRTC_ANSWER":
+        case "WEBRTC_ICE": {
+          if (!currentClient?.roomId) return;
+          broadcastToRoom(currentClient.roomId, data, ws);
+          break;
+        }
+
+        case "VIDEO_FRAME": {
+          if (!currentClient?.roomId) return;
+          // Relay lightweight live video frame (JPEG/WebP base64) to room peers
+          broadcastToRoom(
+            currentClient.roomId,
+            {
+              type: "VIDEO_FRAME",
+              senderId: currentClient.senderId,
+              role: currentClient.role,
+              frame: data.frame,
+              timestamp: Date.now()
+            },
+            ws
+          );
+          break;
+        }
+
+        case "MEDIA_STATUS": {
+          if (!currentClient?.roomId) return;
+          if (data.mediaStatus) {
+            currentClient.mediaStatus = {
+              ...currentClient.mediaStatus,
+              ...data.mediaStatus
+            };
+          }
+          broadcastToRoom(
+            currentClient.roomId,
+            {
+              type: "PEER_MEDIA_STATUS",
+              senderId: currentClient.senderId,
+              mediaStatus: currentClient.mediaStatus
+            },
+            ws
+          );
+          break;
+        }
+
+        case "CHAT_MESSAGE": {
+          if (!currentClient?.roomId) return;
+          broadcastToRoom(
+            currentClient.roomId,
+            {
+              type: "CHAT_MESSAGE",
+              senderId: currentClient.senderId,
+              senderName: data.senderName || currentClient.userInfo?.name || "Participant",
+              message: data.message,
+              timestamp: Date.now()
+            },
+            ws
+          );
+          break;
+        }
+
+        case "TRANSLATED_MESSAGE": {
+          if (!currentClient?.roomId) return;
+          broadcastToRoom(
+            currentClient.roomId,
+            {
+              type: "TRANSLATED_MESSAGE",
+              senderId: currentClient.senderId,
+              text: data.text,
+              symbol: data.symbol || "",
+              signLanguage: data.signLanguage || "ASL",
+              confidence: data.confidence || 1,
+              isAi: !!data.isAi,
+              senderName: data.senderName || currentClient.userInfo?.name || "Participant",
+              senderRole: currentClient.role,
+              timestamp: Date.now()
+            },
+            ws
+          );
+          break;
+        }
+
+        case "HAND_RAISE": {
+          if (!currentClient?.roomId) return;
+          broadcastToRoom(
+            currentClient.roomId,
+            {
+              type: "HAND_RAISE",
+              senderId: currentClient.senderId,
+              isHandRaised: data.isHandRaised
+            },
+            ws
+          );
+          break;
+        }
+
+        case "PING": {
+          ws.send(JSON.stringify({ type: "PONG", timestamp: Date.now() }));
+          break;
+        }
+
+        default:
+          break;
+      }
+    } catch (err) {
+      console.warn("[WS] Error parsing message:", err?.message);
+    }
+  });
+
+  const cleanup = () => {
+    if (currentClient && currentClient.roomId) {
+      const room = callRooms.get(currentClient.roomId);
+      if (room) {
+        room.delete(currentClient);
+        console.log(`[WS] Peer left room ${currentClient.roomId}. Remaining: ${room.size}`);
+        broadcastToRoom(currentClient.roomId, {
+          type: "PEER_LEFT",
+          senderId: currentClient.senderId,
+          role: currentClient.role,
+          totalInRoom: room.size
+        });
+        if (room.size === 0) {
+          callRooms.delete(currentClient.roomId);
+        }
+      }
+    }
+  };
+
+  ws.on("close", cleanup);
+  ws.on("error", cleanup);
+});
+
+// Periodic heartbeat to prevent stale sockets
+const heartbeatInterval = setInterval(() => {
+  for (const client of wss.clients) {
+    if (client.isAlive === false) {
+      client.terminate();
+      continue;
+    }
+    client.isAlive = false;
+    client.ping();
+  }
+}, 30000);
+
+wss.on("close", () => {
+  clearInterval(heartbeatInterval);
+});
+
+// Room status endpoint for frontend/diagnostics
+app.get("/api/ws/rooms", (_req, res) => {
+  const roomsData = [];
+  for (const [roomId, clients] of callRooms.entries()) {
+    roomsData.push({
+      roomId,
+      participantCount: clients.size,
+      participants: Array.from(clients).map((c) => ({
+        senderId: c.senderId,
+        role: c.role,
+        name: c.userInfo?.name || "Participant",
+        mediaStatus: c.mediaStatus
+      }))
+    });
+  }
+  res.json({
+    success: true,
+    totalActiveRooms: roomsData.length,
+    rooms: roomsData
+  });
+});
 
 // Global process error handlers to prevent crashes
 process.on("unhandledRejection", (reason) => {
@@ -1826,8 +2100,8 @@ async function startServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SignLink Backend] Server running at http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`[SignLink Backend] Server and WebSocket running at http://0.0.0.0:${PORT} (WS: /ws/call)`);
   });
 }
 startServer();

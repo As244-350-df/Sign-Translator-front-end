@@ -1,4 +1,5 @@
 import { MOCK_INTERPRETERS, MOCK_BOOKINGS, MOCK_SESSION_HISTORY, MOCK_NOTIFICATIONS, INITIAL_USER } from "../data/mockData";
+import { firestoreService } from "../services/firestoreService";
 const BASE_URL = "/api";
 const api = {
   // Healthcheck
@@ -36,8 +37,16 @@ const api = {
       return { ...INITIAL_USER, ...updates };
     }
   },
-  // Interpreters
+  // Interpreters - Live Firestore priority with API fallback
   async getInterpreters(params) {
+    try {
+      const firestoreResults = await firestoreService.getInterpreters(params);
+      if (firestoreResults && firestoreResults.length > 0) {
+        return firestoreResults;
+      }
+    } catch (fsErr) {
+      console.warn("Firestore getInterpreters notice:", fsErr?.message);
+    }
     try {
       const query = new URLSearchParams();
       if (params?.language && params.language !== "ALL") query.set("language", params.language);
@@ -55,6 +64,10 @@ const api = {
     }
   },
   async getInterpreterById(id) {
+    try {
+      const fsInt = await firestoreService.getInterpreterById(id);
+      if (fsInt) return fsInt;
+    } catch {}
     try {
       const res = await fetch(`${BASE_URL}/interpreters/${id}`);
       if (!res.ok) throw new Error("Interpreter not found");
@@ -85,6 +98,9 @@ const api = {
     }
   },
   async updateInterpreterStatus(id, status) {
+    try {
+      await firestoreService.updateInterpreterStatus(id, status);
+    } catch {}
     try {
       const res = await fetch(`${BASE_URL}/interpreters/${id}/status`, {
         method: "PATCH",

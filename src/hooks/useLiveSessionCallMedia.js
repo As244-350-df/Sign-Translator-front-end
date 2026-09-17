@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 export const useLiveSessionCallMedia = ({
   useRealCameraLocal,
   isCameraOff,
+  isMuted = false,
   cameraFacing,
   mainViewMode,
   setUseRealCameraLocal
@@ -10,6 +11,25 @@ export const useLiveSessionCallMedia = ({
   const localVideoRef = useRef(null);
   const mainVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const [localStream, setLocalStream] = useState(null);
+
+  // Synchronize microphone hardware mute state
+  useEffect(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !isMuted;
+      });
+    }
+  }, [isMuted]);
+
+  // Synchronize webcam hardware video track state
+  useEffect(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((track) => {
+        track.enabled = !isCameraOff;
+      });
+    }
+  }, [isCameraOff]);
 
   // Helper to safely bind existing media stream to video elements
   const attachStreamToVideos = useCallback(() => {
@@ -36,10 +56,13 @@ export const useLiveSessionCallMedia = ({
   useEffect(() => {
     let isCancelled = false;
 
-    if (useRealCameraLocal && !isCameraOff) {
+    if (useRealCameraLocal) {
       const acquireStream = async () => {
         // If stream is already active with live tracks, simply re-bind
-        if (localStreamRef.current && localStreamRef.current.getTracks().some((t) => t.readyState === "live")) {
+        if (
+          localStreamRef.current &&
+          localStreamRef.current.getTracks().some((t) => t.readyState === "live")
+        ) {
           attachStreamToVideos();
           return;
         }
@@ -77,7 +100,16 @@ export const useLiveSessionCallMedia = ({
           return;
         }
 
+        // Apply initial mute and camera off states
+        s.getAudioTracks().forEach((t) => {
+          t.enabled = !isMuted;
+        });
+        s.getVideoTracks().forEach((t) => {
+          t.enabled = !isCameraOff;
+        });
+
         localStreamRef.current = s;
+        setLocalStream(s);
         attachStreamToVideos();
       };
 
@@ -86,6 +118,7 @@ export const useLiveSessionCallMedia = ({
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
+        setLocalStream(null);
       }
     }
 
@@ -94,14 +127,17 @@ export const useLiveSessionCallMedia = ({
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
+        setLocalStream(null);
       }
     };
-  }, [useRealCameraLocal, isCameraOff, cameraFacing, setUseRealCameraLocal, attachStreamToVideos]);
+  }, [useRealCameraLocal, cameraFacing, setUseRealCameraLocal, attachStreamToVideos]);
 
   return {
     localVideoRef,
     mainVideoRef,
     localStreamRef,
+    localStream,
     attachStreamToVideos
   };
 };
+

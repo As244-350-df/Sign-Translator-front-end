@@ -16,8 +16,46 @@ export const FirebaseProvider = ({ children }) => {
   const [bookings, setBookings] = useState(MOCK_BOOKINGS);
   const [bookmarks, setBookmarks] = useState([]);
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
+  const [interpreters, setInterpreters] = useState([]);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
+
+  // Load and subscribe to live interpreters from Firestore
+  useEffect(() => {
+    let isMounted = true;
+    const loadInterpreters = async () => {
+      try {
+        const liveList = await firestoreService.getInterpreters();
+        if (isMounted && liveList && liveList.length > 0) {
+          setInterpreters(liveList);
+        }
+      } catch (err) {
+        console.warn('Initial interpreter fetch notice:', err?.message);
+      }
+    };
+    loadInterpreters();
+
+    // Subscribe to real-time interpreter status changes in Firestore
+    const unsubscribeInterpreters = firestoreService.subscribeInterpreters((updatedList) => {
+      if (isMounted && updatedList && updatedList.length > 0) {
+        setInterpreters((prev) => {
+          // Merge with any existing user-based interpreters
+          const map = new Map();
+          updatedList.forEach(item => map.set(item.id || item.interpreterId, item));
+          prev.forEach(item => {
+            const id = item.id || item.interpreterId;
+            if (!map.has(id)) map.set(id, item);
+          });
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeInterpreters();
+    };
+  }, []);
 
   // Listen to Auth State
   useEffect(() => {
@@ -232,16 +270,27 @@ export const FirebaseProvider = ({ children }) => {
 
   // Bookings
   const addBooking = async (bookingData) => {
-    if (firebaseUser) {
-      const created = await firestoreService.createBooking(firebaseUser.uid, bookingData);
+    const uid = firebaseUser?.uid || user?.userId || user?.id || 'client-demo-01';
+    const clientName = user?.name || bookingData.clientName || 'Client';
+    const payload = {
+      ...bookingData,
+      clientName,
+      clientUserId: uid
+    };
+
+    try {
+      const created = await firestoreService.createBooking(uid, payload);
       if (created) {
-        setBookings(prev => [created, ...prev]);
+        setBookings(prev => [created, ...prev.filter(b => b.id !== created.id)]);
         return created;
       }
+    } catch (err) {
+      console.warn('Booking create notice:', err);
     }
+
     const fallback = {
       id: `bk-${Date.now()}`,
-      ...bookingData,
+      ...payload,
       status: 'upcoming'
     };
     setBookings(prev => [fallback, ...prev]);
@@ -249,10 +298,37 @@ export const FirebaseProvider = ({ children }) => {
   };
 
   const removeBooking = async (bookingId) => {
-    if (firebaseUser) {
-      await firestoreService.cancelBooking(firebaseUser.uid, bookingId);
-    }
+    const uid = firebaseUser?.uid || user?.userId || user?.id || 'client-demo-01';
+    await firestoreService.cancelBooking(uid, bookingId).catch(() => {});
     setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'cancelled' } : b));
+  };
+
+  // Real-Time Calls Dispatch
+  const initiateCall = async (callParams) => {
+    const clientUid = firebaseUser?.uid || user?.userId || user?.id || 'client-user';
+    const clientName = user?.name || 'SignLink Client';
+    const clientAvatar = user?.avatar || '';
+    return await firestoreService.initiateCall({
+      clientUserId: clientUid,
+      clientName,
+      clientAvatar,
+      ...callParams
+    });
+  };
+
+  const acceptCall = async (sessionId, interpreterData) => {
+    return await firestoreService.acceptCall(sessionId, interpreterData || {
+      name: user?.name,
+      avatar: user?.avatar
+    });
+  };
+
+  const declineCall = async (sessionId, reason) => {
+    return await firestoreService.declineCall(sessionId, reason);
+  };
+
+  const searchDatabase = async (searchTerm, options) => {
+    return await firestoreService.searchDatabase(searchTerm, options);
   };
 
   // Bookmarks
@@ -272,6 +348,67 @@ export const FirebaseProvider = ({ children }) => {
     }
   };
 
+  // Live Interpreters Refresh & Publishing
+  const refreshInterpreters = async (filters = {}) => {
+    try {
+      const list = await firestoreService.getInterpreters(filters);
+      if (list && list.length > 0) {
+        setInterpreters(list);
+      }
+      return list;
+    } catch (err) {
+      console.warn('Refresh interpreters error:', err);
+      return interpreters;
+    }
+  };
+
+  const publishAsInterpreter = async (customDetails = {}) => {
+    const uid = firebaseUser?.uid || user?.userId || 'guest-interpreter';
+    const profile = {
+      name: user?.name || 'Registered Interpreter',
+      title: customDetails.title || 'Certified ASL / English Interpreter',
+      avatar: user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
+      ratePerHour: Number(customDetails.ratePerHour || 65),
+      ratePerMinute: 1.10,
+      languages: customDetails.languages || ['ASL', 'English'],
+      spokenLanguages: ['English'],
+      specialties: customDetails.specialties || ['Medical & Healthcare', 'Legal', 'Educational'],
+      availableStatus: 'online',
+      bio: customDetails.bio || 'Certified sign language interpreter active and ready for live video interpretation.',
+      certifications: ['RID NIC-Master', 'BEI Advanced'],
+      availableSlots: ['09:00 AM', '11:30 AM', '02:00 PM', '04:30 PM'],
+      experienceYears: 6,
+      completedSessions: 42,
+      verified: true
+    };
+
+    if (firebaseUser) {
+      await firestoreService.saveInterpreterProfile(uid, profile);
+      await firestoreService.saveUserProfile(uid, {
+        ...user,
+        role: 'interpreter',
+        availableStatus: 'online'
+      });
+      setUser(prev => ({ ...prev, role: 'interpreter', availableStatus: 'online' }));
+    }
+
+    setInterpreters(prev => {
+      const filtered = prev.filter(i => (i.id || i.interpreterId) !== uid);
+      return [{ id: uid, interpreterId: uid, ...profile, isFirebaseUser: true }, ...filtered];
+    });
+
+    return profile;
+  };
+
+  const updateInterpreterStatus = async (status) => {
+    const uid = firebaseUser?.uid || user?.userId;
+    if (uid && firebaseUser) {
+      await firestoreService.updateInterpreterStatus(uid, status);
+    }
+    setUser(prev => ({ ...prev, availableStatus: status }));
+    setInterpreters(prev => prev.map(i => (i.id === uid || i.interpreterId === uid) ? { ...i, availableStatus: status } : i));
+  };
+
   const value = {
     firebaseUser,
     user,
@@ -280,6 +417,7 @@ export const FirebaseProvider = ({ children }) => {
     bookings,
     bookmarks,
     notifications,
+    interpreters,
     isLoadingAuth,
     authError,
     isAuthenticated: Boolean(firebaseUser),
@@ -295,8 +433,15 @@ export const FirebaseProvider = ({ children }) => {
     recordSession,
     addBooking,
     removeBooking,
+    initiateCall,
+    acceptCall,
+    declineCall,
+    searchDatabase,
     toggleBookmark,
-    setNotifications
+    setNotifications,
+    refreshInterpreters,
+    publishAsInterpreter,
+    updateInterpreterStatus
   };
 
   return (

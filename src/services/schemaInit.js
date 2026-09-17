@@ -33,22 +33,31 @@ export async function initializeFirestoreSchema() {
     const intCol = collection(db, 'interpreters');
     const intSnap = await getDocs(query(intCol, limit(1))).catch(() => null);
     if (intSnap && intSnap.empty && MOCK_INTERPRETERS?.length > 0) {
-      console.log('Seeding initial interpreter records to Firestore...');
-      for (const item of MOCK_INTERPRETERS.slice(0, 3)) {
+      console.log('Seeding initial verified interpreter records to Firestore...');
+      for (const item of MOCK_INTERPRETERS) {
         await setDoc(doc(db, 'interpreters', item.id), {
           interpreterId: item.id,
           name: item.name,
           title: item.title || 'Certified ASL Interpreter',
           avatar: item.avatar,
-          rating: item.rating || 4.9,
-          reviewsCount: item.reviewsCount || 85,
+          coverImage: item.coverImage || 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=800&auto=format&fit=crop&q=80',
+          rating: Number(item.rating || 4.9),
+          reviewsCount: Number(item.reviewsCount || 85),
           verified: true,
-          ratePerHour: item.ratePerHour || 65,
+          ratePerHour: Number(item.ratePerHour || 65),
+          ratePerMinute: Number(item.ratePerMinute || 1.10),
           languages: item.languages || ['ASL', 'English'],
+          spokenLanguages: item.spokenLanguages || ['English'],
           specialties: item.specialties || ['Medical', 'Legal', 'Educational'],
-          status: item.status || 'available',
-          totalHours: item.totalHours || 820,
-          createdAt: new Date().toISOString()
+          availableStatus: ['online', 'busy', 'offline'].includes(item.availableStatus) ? item.availableStatus : 'online',
+          bio: item.bio || 'Certified sign language interpreter ready for real-time live video calls.',
+          certifications: item.certifications || ['RID NIC-Master', 'BEI Advanced'],
+          availableSlots: item.availableSlots || ['09:00 AM', '11:30 AM', '02:00 PM', '04:30 PM'],
+          totalHours: Number(item.totalHours || 820),
+          experienceYears: Number(item.experienceYears || 8),
+          completedSessions: Number(item.completedSessions || 140),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         }).catch(err => console.warn(`Skipped seeding interpreter ${item.id}:`, err.message));
       }
     }

@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Mic, MicOff, Camera, CameraOff, PhoneOff, Radio, Copy, ExternalLink, Columns, Maximize2 } from "lucide-react";
 import { MOCK_INTERPRETERS } from "../data/mockData";
+import { useFirebase } from "../context/FirebaseContext";
+import { firestoreService } from "../services/firestoreService";
 import { speakText, stopSpeaking } from "../utils/speech";
 import { RealtimeHandTracker, SIGN_DICTIONARY } from "../utils/handTracker";
 import { mediaPipeTracker } from "../utils/mediaPipeTracker";
@@ -14,17 +17,90 @@ import { LiveSessionChatDrawer } from "./live-session/LiveSessionChatDrawer";
 import { LiveSessionPipView } from "./live-session/LiveSessionPipView";
 import { LiveSessionTelemetryOverlay } from "./live-session/LiveSessionTelemetryOverlay";
 import { LiveSessionStageOverlay } from "./live-session/LiveSessionStageOverlay";
+import { LiveSessionRemoteVideoStage } from "./live-session/LiveSessionRemoteVideoStage";
+import { LiveSessionFloatingVideoControls } from "./live-session/LiveSessionFloatingVideoControls";
+import { DisconnectModal } from "./live-session/DisconnectModal";
+import { CallSignalingEngine } from "../utils/callSignaling";
 import { useLiveSessionCallMedia } from "../hooks/useLiveSessionCallMedia";
 
 const LiveSessionCallView = ({
   interpreterId = "int-01",
+  initialPerspective = null,
   onEndCall,
   settings = {}
 }) => {
-  const interpreter = MOCK_INTERPRETERS.find((i) => i.id === interpreterId) || MOCK_INTERPRETERS[0];
+  const { interpreters, user } = useFirebase();
+  const interpreter = useMemo(() => {
+    return (
+      interpreters?.find((i) => i.id === interpreterId || i.interpreterId === interpreterId) ||
+      MOCK_INTERPRETERS.find((i) => i.id === interpreterId) ||
+      MOCK_INTERPRETERS[0]
+    );
+  }, [interpreters, interpreterId]);
   const [callDuration, setCallDuration] = useState(142);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const [mediaFeedbackNotice, setMediaFeedbackNotice] = useState(null);
+  const feedbackTimeoutRef = useRef(null);
+
+  const showMediaNotice = (text, icon) => {
+    if (feedbackTimeoutRef.current) clearTimeout(feedbackTimeoutRef.current);
+    setMediaFeedbackNotice({ text, icon });
+    feedbackTimeoutRef.current = setTimeout(() => {
+      setMediaFeedbackNotice(null);
+    }, 2200);
+  };
+
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const next = !prev;
+      showMediaNotice(
+        next ? "Microphone Muted" : "Microphone Active",
+        next ? <MicOff className="w-4 h-4 text-rose-400" /> : <Mic className="w-4 h-4 text-emerald-400" />
+      );
+      return next;
+    });
+  }, []);
+
+  const handleToggleCamera = useCallback(() => {
+    setIsCameraOff((prev) => {
+      const next = !prev;
+      showMediaNotice(
+        next ? "Camera Disabled" : "Camera Enabled",
+        next ? <CameraOff className="w-4 h-4 text-rose-400" /> : <Camera className="w-4 h-4 text-indigo-400" />
+      );
+      return next;
+    });
+  }, []);
+
+  // Keyboard shortcut listener for Mute (M), Camera (C), and Disconnect (Esc)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key === "m" || e.key === "M") {
+        e.preventDefault();
+        handleToggleMute();
+      } else if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
+        handleToggleCamera();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setShowDisconnectModal(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleToggleMute, handleToggleCamera]);
+
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showSignDeck, setShowSignDeck] = useState(false);
@@ -66,6 +142,23 @@ const LiveSessionCallView = ({
   const [useRealCameraLocal, setUseRealCameraLocal] = useState(true);
   const [mainViewMode, setMainViewMode] = useState("interpreter");
 
+  // Perspective: 'client' (viewing interpreter) or 'interpreter' (viewing client)
+  const [perspective, setPerspective] = useState(
+    initialPerspective || (user?.role === "interpreter" ? "interpreter" : "client")
+  );
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [remoteVideoFrame, setRemoteVideoFrame] = useState(null);
+  const [remoteMediaStatus, setRemoteMediaStatus] = useState({
+    isMuted: false,
+    isCameraOff: false,
+    isHandRaised: false
+  });
+  const [remotePeerInfo, setRemotePeerInfo] = useState(null);
+  const [remotePeerRole, setRemotePeerRole] = useState(null);
+  const [layoutMode, setLayoutMode] = useState("split"); // 'split' | 'pip'
+  const [peerStatus, setPeerStatus] = useState("idle");
+  const signalingEngineRef = useRef(null);
+
   // Gemini AI landmark translation in live call
   const [geminiTranslation, setGeminiTranslation] = useState(null);
   const [isGeminiLoading, setIsGeminiLoading] = useState(false);
@@ -91,13 +184,179 @@ const LiveSessionCallView = ({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const { localVideoRef, mainVideoRef, localStreamRef } = useLiveSessionCallMedia({
+  const { localVideoRef, mainVideoRef, localStreamRef, localStream } = useLiveSessionCallMedia({
     useRealCameraLocal,
     isCameraOff,
+    isMuted,
     cameraFacing: settings.cameraFacing,
     mainViewMode,
     setUseRealCameraLocal
   });
+
+  // Cross-tab and WebSocket + WebRTC signaling lifecycle for 2-way call
+  useEffect(() => {
+    const engine = new CallSignalingEngine(`signlink-call-${interpreterId}`);
+    signalingEngineRef.current = engine;
+
+    engine.setStreams(
+      localStreamRef.current,
+      (stream) => {
+        setRemoteStream(stream);
+        setPeerStatus("connected");
+      },
+      ({ status, peerRole, peerInfo, mediaStatus }) => {
+        setPeerStatus(status);
+        if (peerRole) setRemotePeerRole(peerRole);
+        if (peerInfo) setRemotePeerInfo(peerInfo);
+        if (mediaStatus) setRemoteMediaStatus(mediaStatus);
+      },
+      (frameData, meta) => {
+        setRemoteVideoFrame(frameData);
+        setPeerStatus("connected");
+        if (meta?.role && !remotePeerRole) {
+          setRemotePeerRole(meta.role);
+        }
+      }
+    );
+
+    engine.onPeerMediaStatus = (mediaStatus) => {
+      setRemoteMediaStatus((prev) => ({ ...prev, ...mediaStatus }));
+    };
+
+    engine.onRemoteChatMessage = (msg) => {
+      const msgText = typeof msg === "string" ? msg : msg?.text;
+      const senderName =
+        (typeof msg === "object" && msg?.senderName) ||
+        remotePeerInfo?.name ||
+        (perspective === "client" ? "Elena (Interpreter)" : "Alex (Client)");
+      const formattedTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `remote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          sender: senderName,
+          time: formattedTime,
+          text: msgText,
+          isSelf: false,
+          isTranslated: typeof msg === "object" && !!msg?.isTranslated
+        }
+      ]);
+
+      if (typeof msg === "object" && msg?.isTranslated) {
+        setCurrentCaption(`"${senderName} (Signed): ${msgText}"`);
+      }
+
+      showMediaNotice(`Note from ${senderName}`, <MessageSquare className="w-4 h-4 text-indigo-400" />);
+    };
+
+    engine.onRemoteTranslatedMessage = (data) => {
+      const senderName =
+        data.senderName ||
+        remotePeerInfo?.name ||
+        (perspective === "client" ? "Elena (Interpreter)" : "Alex (Client)");
+      const displayText = data.symbol ? `${data.symbol} ${data.text}` : data.text;
+      const formattedTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `trans-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          sender: `${senderName} (Signed)`,
+          time: formattedTime,
+          text: displayText,
+          isSelf: false,
+          isTranslated: true
+        }
+      ]);
+
+      setCurrentCaption(`"${senderName} (${data.isAi ? "Gemini AI" : "Sign Language"}): ${data.text}"`);
+
+      if (settingsRef.current?.speechVoiceRate !== undefined) {
+        speakText(data.text, settingsRef.current.speechVoiceRate, settingsRef.current.speechVoicePitch);
+      }
+
+      showMediaNotice(`Translated from ${senderName}: ${data.text}`, <Sparkles className="w-4 h-4 text-emerald-400" />);
+    };
+
+    engine.onRemoteHandRaise = (isRaised) => {
+      setRemoteMediaStatus((prev) => ({ ...prev, isHandRaised: isRaised }));
+    };
+
+    engine.announcePresence(
+      perspective,
+      {
+        name: user?.name || (perspective === "client" ? "Alex Morgan" : "Elena Rostova"),
+        avatar: user?.avatar,
+        role: user?.role
+      },
+      { isMuted, isCameraOff, isHandRaised }
+    );
+
+    return () => {
+      engine.destroy();
+    };
+  }, [interpreterId, perspective, user, localStreamRef]);
+
+  // Keep signaling engine's localStream reference updated
+  useEffect(() => {
+    if (signalingEngineRef.current && localStream) {
+      signalingEngineRef.current.updateLocalStream(localStream);
+    }
+  }, [localStream]);
+
+  // Real-Time WebSocket Video Frame Stream Broadcaster
+  useEffect(() => {
+    if (!useRealCameraLocal || isCameraOff) return;
+
+    const frameCanvas = document.createElement("canvas");
+    frameCanvas.width = 400;
+    frameCanvas.height = 300;
+    const ctx = frameCanvas.getContext("2d", { willReadFrequently: true });
+
+    const frameInterval = setInterval(() => {
+      const videoEl = localVideoRef.current;
+      const engine = signalingEngineRef.current;
+      if (!videoEl || !engine || videoEl.readyState < 2 || videoEl.paused) return;
+
+      try {
+        ctx.save();
+        ctx.translate(frameCanvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(videoEl, 0, 0, frameCanvas.width, frameCanvas.height);
+        ctx.restore();
+
+        const frameData = frameCanvas.toDataURL("image/jpeg", 0.55);
+        engine.sendVideoFrame(frameData);
+      } catch (err) {
+        // Frame skipped if context busy
+      }
+    }, 110);
+
+    return () => clearInterval(frameInterval);
+  }, [useRealCameraLocal, isCameraOff, localVideoRef]);
+
+  // Sync Media Status over WebSocket (Mute, Camera, Hand Raised)
+  useEffect(() => {
+    if (signalingEngineRef.current) {
+      signalingEngineRef.current.sendMediaStatus({
+        isMuted,
+        isCameraOff,
+        isHandRaised
+      });
+    }
+  }, [isMuted, isCameraOff, isHandRaised]);
+
+  const handleCopySessionLink = () => {
+    try {
+      const oppRole = perspective === "client" ? "interpreter" : "client";
+      const url = new URL(window.location.href);
+      url.searchParams.set("session", interpreterId);
+      url.searchParams.set("role", oppRole);
+      navigator.clipboard.writeText(url.toString());
+      showMediaNotice("Room link copied to clipboard!", <Copy className="w-4 h-4 text-indigo-400" />);
+    } catch {}
+  };
 
   useEffect(() => {
     handTrackerRef.current.setAutoCenter(isAutoCentering);
@@ -260,9 +519,17 @@ const LiveSessionCallView = ({
               sender: "You (Signed)",
               time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               text: `${sign.symbol} ${sign.translatedText}`,
-              isSelf: true
+              isSelf: true,
+              isTranslated: true
             }
           ]);
+          signalingEngineRef.current?.sendTranslatedMessage({
+            text: sign.translatedText,
+            symbol: sign.symbol,
+            signLanguage: settingsRef.current?.primarySignLanguage || "ASL",
+            confidence: detection.confidence || 0.98,
+            isAi: false
+          });
         }
 
         // GEMINI AI INTEGRATION IN LIVE CALL:
@@ -280,6 +547,25 @@ const LiveSessionCallView = ({
               setGeminiTranslation(aiResult);
               const aiText = aiResult.englishTranslation || aiResult.translation || sign.translatedText;
               setCurrentCaption(`"You (Gemini AI ${settingsRef.current?.primarySignLanguage || "ASL"}): ${aiText}"`);
+              if (autoChatSigns && aiText !== sign.translatedText) {
+                setChatMessages((prev) => [
+                  ...prev,
+                  {
+                    sender: "You (Gemini AI)",
+                    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                    text: `✨ ${aiText}`,
+                    isSelf: true,
+                    isTranslated: true
+                  }
+                ]);
+                signalingEngineRef.current?.sendTranslatedMessage({
+                  text: aiText,
+                  symbol: "✨",
+                  signLanguage: settingsRef.current?.primarySignLanguage || "ASL",
+                  confidence: 0.99,
+                  isAi: true
+                });
+              }
             }
           }).catch((err) => {
             console.warn("Gemini Live Call translation note:", err);
@@ -357,28 +643,27 @@ const LiveSessionCallView = ({
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
     if (!chatInput.trim()) return;
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        sender: "You",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        text: chatInput.trim(),
-        isSelf: true
-      }
-    ]);
+    const msgText = chatInput.trim();
+    const newMsg = {
+      sender: "You",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      text: msgText,
+      isSelf: true
+    };
+    setChatMessages((prev) => [...prev, newMsg]);
+    signalingEngineRef.current?.sendChatMessage(msgText);
     setChatInput("");
   };
 
   const handleQuickChat = (phrase) => {
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        sender: "You",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        text: phrase,
-        isSelf: true
-      }
-    ]);
+    const newMsg = {
+      sender: "You",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      text: phrase,
+      isSelf: true
+    };
+    setChatMessages((prev) => [...prev, newMsg]);
+    signalingEngineRef.current?.sendChatMessage(phrase);
   };
 
   const handleTestSign = (signKey) => {
@@ -412,15 +697,21 @@ const LiveSessionCallView = ({
     ]);
     setCurrentCaption(`"You (Sign Language): ${sign.translatedText}"`);
     speakText(sign.translatedText, settings.speechVoiceRate, settings.speechVoicePitch);
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        sender: "You (Signed)",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        text: `${sign.symbol} ${sign.translatedText}`,
-        isSelf: true
-      }
-    ]);
+    const signedMsg = {
+      sender: "You (Signed)",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      text: `${sign.symbol} ${sign.translatedText}`,
+      isSelf: true
+    };
+    setChatMessages((prev) => [...prev, signedMsg]);
+    signalingEngineRef.current?.sendChatMessage(`${sign.symbol} ${sign.translatedText}`);
+    signalingEngineRef.current?.sendTranslatedMessage({
+      text: sign.translatedText,
+      symbol: sign.symbol,
+      signLanguage: settings.primarySignLanguage || "ASL",
+      confidence: sign.confidence || 0.98,
+      isAi: false
+    });
   };
 
   const handleToggleRecording = async () => {
@@ -455,6 +746,9 @@ const LiveSessionCallView = ({
     <div className="relative min-h-[calc(100vh-8rem)] flex flex-col bg-slate-950 text-white rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
       <LiveSessionHeader
         interpreter={interpreter}
+        clientUser={user}
+        perspective={perspective}
+        onChangePerspective={setPerspective}
         primarySignLanguage={settings.primarySignLanguage || "ASL"}
         isRecording={isRecording}
         recordedDuration={recordedDuration}
@@ -463,147 +757,309 @@ const LiveSessionCallView = ({
         formatTime={formatTime}
         showDiagnostics={showDiagnostics}
         onToggleDiagnostics={() => setShowDiagnostics(!showDiagnostics)}
+        peerStatus={peerStatus}
+        layoutMode={layoutMode}
+        onToggleLayoutMode={() => setLayoutMode((prev) => (prev === "pip" ? "split" : "pip"))}
+        roomId={interpreterId || "room-4927"}
+        onCopyRoomLink={handleCopySessionLink}
+        showChat={showChat}
+        onToggleChat={() => setShowChat((prev) => !prev)}
+        autoChatSigns={autoChatSigns}
+        onToggleAutoChat={() => setAutoChatSigns((prev) => !prev)}
+        onDisconnect={() => setShowDisconnectModal(true)}
       />
 
-      {/* Main Video Presentation Stage */}
-      <div className="relative flex-1 flex items-center justify-center bg-slate-900 overflow-hidden">
-        <div className="relative w-full h-full flex items-center justify-center">
-          {mainViewMode === "camera" && useRealCameraLocal ? (
-            <video
-              ref={mainVideoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full h-full object-cover transform -scale-x-100"
+      {/* Video Presentation Stage: Supports PiP and 50/50 Dual Participant Split Grid */}
+      <div className="relative flex-1 flex items-center justify-center bg-slate-900 overflow-hidden min-h-[480px]">
+        {layoutMode === "split" ? (
+          // 50/50 Dual Participant Split Grid: Users see each other AND see themselves side-by-side
+          <div className="relative w-full h-full grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-950">
+            {/* Left/Top: Your Feed (Local Camera) */}
+            <div className="relative w-full h-full min-h-[260px] bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
+              {isCameraOff ? (
+                <div className="flex flex-col items-center justify-center text-center p-4">
+                  <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-2">
+                    <CameraOff className="w-8 h-8 text-slate-400" />
+                  </div>
+                  <span className="text-sm font-bold text-white">Your Camera is Off</span>
+                  <span className="text-xs text-slate-400">Click camera button below to resume</span>
+                </div>
+              ) : (
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover transform -scale-x-100"
+                />
+              )}
+
+              {/* Overlay Badge for Self */}
+              <div className="absolute top-3 left-3 flex items-center space-x-2 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-slate-700/60 text-xs font-bold text-white z-20">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>You ({perspective === "client" ? "Client" : "Interpreter"})</span>
+                {isMuted && <span className="text-rose-400 text-[10px] uppercase font-bold">• Muted</span>}
+              </div>
+            </div>
+
+            {/* Right/Bottom: Remote Participant Feed */}
+            <div className="relative w-full h-full min-h-[260px] bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-lg">
+              <LiveSessionRemoteVideoStage
+                perspective={perspective}
+                interpreter={interpreter}
+                clientUser={user}
+                remoteStream={remoteStream}
+                remoteVideoFrame={remoteVideoFrame}
+                remoteMediaStatus={remoteMediaStatus}
+                remotePeerInfo={remotePeerInfo}
+                peerStatus={peerStatus}
+                signSpeed={signSpeed}
+                currentCaption={currentCaption}
+                showLandmarkOverlay={showLandmarkOverlay}
+                compositeCanvasRef={compositeCanvasRef}
+                onPromptAction={(promptText) => {
+                  const promptMsg = {
+                    id: `prompt-${Date.now()}`,
+                    sender: perspective === "client" ? "You (Client)" : "You (Interpreter)",
+                    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                    text: promptText,
+                    isSelf: true
+                  };
+                  setChatMessages((prev) => [...prev, promptMsg]);
+                  signalingEngineRef.current?.sendChatMessage(promptText);
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          // Picture-in-Picture Mode: Big Stage for Peer + Floating PiP for Self
+          <div className="relative w-full h-full flex items-center justify-center">
+            {mainViewMode === "camera" && useRealCameraLocal ? (
+              <video
+                ref={mainVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover transform -scale-x-100"
+              />
+            ) : (
+              <LiveSessionRemoteVideoStage
+                perspective={perspective}
+                interpreter={interpreter}
+                clientUser={user}
+                remoteStream={remoteStream}
+                remoteVideoFrame={remoteVideoFrame}
+                remoteMediaStatus={remoteMediaStatus}
+                remotePeerInfo={remotePeerInfo}
+                peerStatus={peerStatus}
+                signSpeed={signSpeed}
+                currentCaption={currentCaption}
+                showLandmarkOverlay={showLandmarkOverlay}
+                compositeCanvasRef={compositeCanvasRef}
+                onPromptAction={(promptText) => {
+                  const promptMsg = {
+                    id: `prompt-${Date.now()}`,
+                    sender: perspective === "client" ? "You (Client)" : "You (Interpreter)",
+                    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                    text: promptText,
+                    isSelf: true
+                  };
+                  setChatMessages((prev) => [...prev, promptMsg]);
+                  signalingEngineRef.current?.sendChatMessage(promptText);
+                }}
+              />
+            )}
+
+            <LiveSessionStageOverlay
+              lastCommittedBanner={lastCommittedBanner}
+              onDismissBanner={() => setLastCommittedBanner(null)}
+              signSpeed={signSpeed}
+              handTracker={handTrackerRef.current}
+              onCommitSign={handleCommitCurrentSignNow}
+              onOpenSignDeck={() => setShowSignDeck(true)}
+              captionSpeaking={captionSpeaking}
+              onSpeakCurrentCaption={handleSpeakCurrentCaption}
+              currentCaption={currentCaption}
+              fontSize={settings.fontSize}
+              geminiTranslation={geminiTranslation}
+              isGeminiLoading={isGeminiLoading}
+              onTriggerGeminiTranslate={handleTriggerGeminiTranslate}
             />
-          ) : (
-            <img
-              src={interpreter.coverImage || interpreter.avatar}
-              alt={interpreter.name}
-              className="w-full h-full object-cover opacity-90 transition-transform duration-300 filter contrast-105"
-              style={{ transform: `scale(${signSpeed === 0.5 ? 0.98 : 1})` }}
+
+            <LiveSessionPipView
+              ref={localVideoRef}
+              isCameraOff={isCameraOff}
+              isMuted={isMuted}
+              onToggleMute={handleToggleMute}
+              onToggleCamera={handleToggleCamera}
+              useRealCameraLocal={useRealCameraLocal}
+              cameraZoom={cameraZoom}
+              cameraPan={cameraPan}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              mainViewMode={mainViewMode}
+              perspective={perspective}
+              interpreter={interpreter}
+              clientUser={user}
+              pipCanvasRef={pipCanvasRef}
+              showLandmarkOverlay={showLandmarkOverlay}
+              onToggleMainViewMode={() =>
+                setMainViewMode(mainViewMode === "interpreter" ? "camera" : "interpreter")
+              }
             />
-          )}
+          </div>
+        )}
 
-          {/* Overlay Canvas for Hand Landmark 21-Points & Skeleton */}
-          <canvas
-            ref={compositeCanvasRef}
-            width={1280}
-            height={720}
-            className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-200 ${
-              showLandmarkOverlay ? "opacity-100" : "opacity-0"
-            }`}
-          />
-
-          <LiveSessionStageOverlay
-            lastCommittedBanner={lastCommittedBanner}
-            onDismissBanner={() => setLastCommittedBanner(null)}
-            signSpeed={signSpeed}
-            handTracker={handTrackerRef.current}
-            onCommitSign={handleCommitCurrentSignNow}
-            onOpenSignDeck={() => setShowSignDeck(true)}
-            captionSpeaking={captionSpeaking}
-            onSpeakCurrentCaption={handleSpeakCurrentCaption}
-            currentCaption={currentCaption}
-            fontSize={settings.fontSize}
-            geminiTranslation={geminiTranslation}
-            isGeminiLoading={isGeminiLoading}
-            onTriggerGeminiTranslate={handleTriggerGeminiTranslate}
-          />
-
-          <LiveSessionPipView
-            ref={localVideoRef}
-            isCameraOff={isCameraOff}
-            useRealCameraLocal={useRealCameraLocal}
-            cameraZoom={cameraZoom}
-            cameraPan={cameraPan}
-            onZoomIn={handleZoomIn}
-            onZoomOut={handleZoomOut}
-            mainViewMode={mainViewMode}
-            interpreter={interpreter}
-            pipCanvasRef={pipCanvasRef}
-            showLandmarkOverlay={showLandmarkOverlay}
-            onToggleMainViewMode={() =>
-              setMainViewMode(mainViewMode === "interpreter" ? "camera" : "interpreter")
-            }
-          />
-
-          <LiveSessionTelemetryOverlay showDiagnostics={showDiagnostics} />
-        </div>
-
-        <LiveSessionSignDeckDrawer
-          showSignDeck={showSignDeck}
-          onClose={() => setShowSignDeck(false)}
-          deckTab={deckTab}
-          onSetDeckTab={setDeckTab}
-          onOpenAddSignModal={() => setShowAddSignModal(true)}
-          autoSpeakSigns={autoSpeakSigns}
-          onToggleAutoSpeakSigns={setAutoSpeakSigns}
-          autoChatSigns={autoChatSigns}
-          onToggleAutoChatSigns={setAutoChatSigns}
-          selectedCategory={selectedCategory}
-          onSelectCategory={setSelectedCategory}
-          filteredSigns={filteredSigns}
-          dictionaryList={dictionaryList}
-          activeSignMeaning={null}
-          onTestSign={handleTestSign}
-          freeFingerPose={freeFingerPose}
-          onPoseChange={setFreeFingerPose}
-          handTracker={handTrackerRef.current}
-          recognizedSignLogs={recognizedSignLogs}
+        {/* Floating On-Screen Video Controls HUD (Mute, Camera Toggle, Disconnect) */}
+        <LiveSessionFloatingVideoControls
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
+          isCameraOff={isCameraOff}
+          onToggleCamera={handleToggleCamera}
+          onDisconnect={() => setShowDisconnectModal(true)}
+          perspective={perspective}
         />
 
-        <LiveSessionChatDrawer
-          showChat={showChat}
-          onClose={() => setShowChat(false)}
-          chatMessages={chatMessages}
-          onQuickChat={handleQuickChat}
-          chatInput={chatInput}
-          onChatInputChange={setChatInput}
-          onSendMessage={handleSendMessage}
-        />
+        {/* Toast Notification for Media Actions (Mute/Unmute, Camera On/Off) */}
+        {mediaFeedbackNotice && (
+          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-40 px-4 py-2 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-slate-700 text-white text-xs font-bold shadow-2xl flex items-center space-x-2 animate-in fade-in slide-in-from-top-2 duration-200">
+            {mediaFeedbackNotice.icon}
+            <span>{mediaFeedbackNotice.text}</span>
+          </div>
+        )}
       </div>
 
+      {/* Persistent Bottom Controls Bar */}
       <LiveSessionControlBar
+        isMuted={isMuted}
+        onToggleMute={handleToggleMute}
+        isCameraOff={isCameraOff}
+        onToggleCamera={handleToggleCamera}
+        isHandRaised={isHandRaised}
+        onToggleHandRaise={() => setIsHandRaised(!isHandRaised)}
+        showChat={showChat}
+        onToggleChat={() => setShowChat(!showChat)}
         showSignDeck={showSignDeck}
         onToggleSignDeck={() => setShowSignDeck(!showSignDeck)}
+        isRecording={isRecording}
+        onToggleRecording={handleToggleRecording}
+        onDisconnect={() => setShowDisconnectModal(true)}
+        perspective={perspective}
+        onChangePerspective={setPerspective}
+        signSpeed={signSpeed}
+        onChangeSignSpeed={setSignSpeed}
+        onCommitCurrentSign={handleCommitCurrentSignNow}
         showLandmarkOverlay={showLandmarkOverlay}
         onToggleLandmarkOverlay={() => setShowLandmarkOverlay(!showLandmarkOverlay)}
-        isAutoCentering={isAutoCentering}
-        onToggleAutoCenter={handleToggleAutoCenter}
+        showAlignmentGuide={showAlignmentGuide}
+        onToggleAlignmentGuide={() => setShowAlignmentGuide(!showAlignmentGuide)}
         cameraZoom={cameraZoom}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
-        showAlignmentGuide={showAlignmentGuide}
-        onToggleAlignmentGuide={() => setShowAlignmentGuide(!showAlignmentGuide)}
-        signSpeed={signSpeed}
-        onChangeSignSpeed={setSignSpeed}
-        isMuted={isMuted}
-        onToggleMute={() => setIsMuted(!isMuted)}
-        isCameraOff={isCameraOff}
-        onToggleCamera={() => setIsCameraOff(!isCameraOff)}
-        isHandRaised={isHandRaised}
-        onToggleHandRaised={() => setIsHandRaised(!isHandRaised)}
-        isRecording={isRecording}
-        onToggleRecording={handleToggleRecording}
-        onEndCall={onEndCall}
-        showChat={showChat}
-        onToggleChat={() => setShowChat(!showChat)}
-        geminiAiActive={geminiAiActive}
-        onToggleGeminiAi={() => setGeminiAiActive((prev) => !prev)}
-        isGeminiTranslating={isGeminiLoading}
+        isAutoCentering={isAutoCentering}
+        onToggleAutoCenter={handleToggleAutoCenter}
+        autoChatSigns={autoChatSigns}
+        onToggleAutoChat={() => setAutoChatSigns(!autoChatSigns)}
+        unreadChatCount={0}
+        onPanCamera={(dir) => {
+          setCameraPan((prev) => {
+            const step = 0.08;
+            if (dir === "up") return { ...prev, y: Math.max(-0.4, +(prev.y - step).toFixed(2)) };
+            if (dir === "down") return { ...prev, y: Math.min(0.4, +(prev.y + step).toFixed(2)) };
+            if (dir === "left") return { ...prev, x: Math.max(-0.4, +(prev.x - step).toFixed(2)) };
+            if (dir === "right") return { ...prev, x: Math.min(0.4, +(prev.x + step).toFixed(2)) };
+            return { x: 0, y: 0 };
+          });
+        }}
+        onResetCamera={() => {
+          setCameraZoom(1);
+          setCameraPan({ x: 0, y: 0 });
+        }}
       />
 
-      {showAddSignModal && (
-        <AddSignModal onClose={() => setShowAddSignModal(false)} onSaveSign={handleSaveSign} />
-      )}
+      {/* Interactive Chat Drawer */}
+      <LiveSessionChatDrawer
+        showChat={showChat}
+        isOpen={showChat}
+        onClose={() => setShowChat(false)}
+        chatMessages={chatMessages}
+        chatInput={chatInput}
+        onChatInputChange={setChatInput}
+        onChangeChatInput={setChatInput}
+        onSendMessage={handleSendMessage}
+        onQuickChat={handleQuickChat}
+        perspective={perspective}
+        autoChatSigns={autoChatSigns}
+        onToggleAutoChat={setAutoChatSigns}
+      />
 
-      {showRecordedModal && activeRecordingResult && (
-        <RecordedVideoModal
-          recording={activeRecordingResult}
-          onClose={() => setShowRecordedModal(false)}
+      {/* Interactive Sign Language Deck & Fingerspelling Reference Drawer */}
+      <LiveSessionSignDeckDrawer
+        isOpen={showSignDeck}
+        onClose={() => setShowSignDeck(false)}
+        deckTab={deckTab}
+        onChangeDeckTab={setDeckTab}
+        selectedCategory={selectedCategory}
+        onChangeCategory={setSelectedCategory}
+        filteredSigns={filteredSigns}
+        onTestSign={handleTestSign}
+        onOpenAddSignModal={() => setShowAddSignModal(true)}
+        freeFingerPose={freeFingerPose}
+        onChangeFingerPose={setFreeFingerPose}
+        autoSpeakSigns={autoSpeakSigns}
+        onToggleAutoSpeak={() => setAutoSpeakSigns(!autoSpeakSigns)}
+        autoChatSigns={autoChatSigns}
+        onToggleAutoChat={() => setAutoChatSigns(!autoChatSigns)}
+      />
+
+      {/* Real-Time SFU & AI Telemetry Inspector */}
+      {showDiagnostics && (
+        <LiveSessionTelemetryOverlay
+          peerStatus={peerStatus}
+          localStream={localStreamRef.current}
+          remoteStream={remoteStream}
+          recognizedSignLogs={recognizedSignLogs}
+          currentCaption={currentCaption}
+          cameraZoom={cameraZoom}
+          cameraPan={cameraPan}
+          isAutoCentering={isAutoCentering}
+          fps={60}
+          onClose={() => setShowDiagnostics(false)}
         />
       )}
+
+      {/* Recorded Consultation Session Playback & Export Modal */}
+      {showRecordedModal && activeRecordingResult && (
+        <RecordedVideoModal
+          recordedBlob={activeRecordingResult.blob}
+          videoUrl={activeRecordingResult.url}
+          durationSeconds={activeRecordingResult.duration}
+          isOpen={showRecordedModal}
+          onClose={() => setShowRecordedModal(false)}
+          sessionTitle={`Interpretation Session • ${interpreter.name}`}
+        />
+      )}
+
+      {/* Custom Medical/Legal Sign Registration Modal */}
+      {showAddSignModal && (
+        <AddSignModal
+          isOpen={showAddSignModal}
+          onClose={() => setShowAddSignModal(false)}
+          onSaveSign={handleSaveSign}
+        />
+      )}
+
+      {/* Disconnect Confirmation & Billing Summary Modal */}
+      <DisconnectModal
+        isOpen={showDisconnectModal}
+        onClose={() => setShowDisconnectModal(false)}
+        onConfirmDisconnect={onEndCall}
+        callDuration={callDuration}
+        currentTotalCost={currentTotalCost}
+        interpreter={interpreter}
+        perspective={perspective}
+        formatTime={formatTime}
+      />
     </div>
   );
 };

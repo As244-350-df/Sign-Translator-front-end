@@ -48,13 +48,16 @@ const ScheduleView = ({
     }
   };
   const filteredBookings = useMemo(() => {
-    return bookings.filter((b) => {
+    const list = Array.isArray(bookings) ? bookings : [];
+    return list.filter((b) => {
+      if (!b) return false;
       if (activeFilter === "upcoming") return b.status === "upcoming" || b.status === "in_progress";
       if (activeFilter === "completed") return b.status === "completed";
       return true;
     });
   }, [bookings, activeFilter]);
-  return <div className="space-y-6">
+  return (
+    <div className="space-y-6">
       
       {
     /* Header Banner */
@@ -66,7 +69,7 @@ const ScheduleView = ({
               Scheduled Appointments
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
-              {bookings.filter((b) => b.status === "upcoming").length} Upcoming
+              {(Array.isArray(bookings) ? bookings : []).filter((b) => b?.status === "upcoming").length} Upcoming
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -74,90 +77,92 @@ const ScheduleView = ({
           </p>
         </div>
 
-        {
-    /* Action Buttons */
-  }
+        {/* Action Buttons */}
         <div className="flex items-center space-x-2 self-start sm:self-auto">
           <button
-    onClick={fetchBookings}
-    disabled={loading}
-    title="Refresh bookings from server"
-    className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all"
-  >
+            onClick={fetchBookings}
+            disabled={loading}
+            title="Refresh bookings from server"
+            className="p-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all cursor-pointer"
+          >
             <RotateCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
           
           <button
-    onClick={onOpenDirectory}
-    className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-2 shadow-md shadow-indigo-500/25 transition-all"
-  >
+            onClick={onOpenDirectory}
+            className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center space-x-2 shadow-md shadow-indigo-500/25 transition-all cursor-pointer"
+          >
             <Plus className="w-4 h-4" />
             <span>Book New Interpreter</span>
           </button>
         </div>
       </div>
 
-      {
-    /* Filter Tabs */
-  }
+      {/* Filter Tabs */}
       <div className="flex items-center space-x-2">
-        {["upcoming", "completed", "all"].map((filter) => <button
-    key={filter}
-    onClick={() => setActiveFilter(filter)}
-    className={`px-4 py-2 rounded-xl text-xs font-bold capitalize transition-colors ${activeFilter === filter ? "bg-indigo-600 text-white shadow-xs" : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50"}`}
-  >
+        {["upcoming", "completed", "all"].map((filter) => (
+          <button
+            key={filter}
+            onClick={() => setActiveFilter(filter)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold capitalize transition-colors cursor-pointer ${activeFilter === filter ? "bg-indigo-600 text-white shadow-xs" : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50"}`}
+          >
             {filter} Sessions
-          </button>)}
+          </button>
+        ))}
       </div>
 
-      {
-    /* Bookings Card List */
-  }
+      {/* Bookings Card List */}
       <div className="space-y-4">
-        {filteredBookings.length > 0 ? filteredBookings.map((b) => {
-    const isToday = b.date.toLowerCase() === "today";
-    return <div
-      key={b.id}
-      className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
-    >
-                {
-      /* Left details */
-    }
+        {filteredBookings.length > 0 ? (
+          filteredBookings.map((b) => {
+            const dateStr = b.date || "Upcoming";
+            const isToday = typeof dateStr === "string" && dateStr.toLowerCase() === "today";
+            const costFormatted = typeof b.totalCost === "number" ? b.totalCost.toFixed(2) : Number(b.totalCost || 0).toFixed(2);
+            const avatarUrl = b.interpreterAvatar || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80";
+
+            return (
+              <div
+                key={b.id}
+                className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                {/* Left details */}
                 <div className="flex items-start space-x-4">
                   <img
-      src={b.interpreterAvatar}
-      alt={b.interpreterName}
-      className="w-14 h-14 rounded-2xl object-cover ring-2 ring-indigo-500/30 shrink-0"
-    />
+                    src={avatarUrl}
+                    alt={b.interpreterName || "Interpreter"}
+                    className="w-14 h-14 rounded-2xl object-cover ring-2 ring-indigo-500/30 shrink-0"
+                  />
                   <div>
                     <div className="flex items-center space-x-2">
                       <h3 className="font-bold text-base text-slate-900 dark:text-white">
-                        {b.interpreterName}
+                        {b.interpreterName || "Certified Interpreter"}
                       </h3>
                       <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
-                        {b.language}
+                        {b.language || "ASL"}
                       </span>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1.5 font-medium">
                       <span className="flex items-center space-x-1">
                         <CalendarIcon className="w-3.5 h-3.5 text-indigo-500" />
-                        <strong className="text-slate-800 dark:text-slate-200">{b.date}</strong>
+                        <strong className="text-slate-800 dark:text-slate-200">{dateStr}</strong>
                       </span>
                       <span>•</span>
                       <span className="flex items-center space-x-1">
                         <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>{b.time} ({b.durationMinutes} min)</span>
+                        <span>{b.time || "10:00 AM"} ({b.durationMinutes || 45} min)</span>
                       </span>
                       <span>•</span>
                       <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                        ${b.totalCost.toFixed(2)}
+                        ${costFormatted}
                       </span>
                     </div>
 
-                    {b.notes && <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 bg-slate-50 dark:bg-slate-900/60 p-2 rounded-xl border border-slate-100 dark:border-slate-800 line-clamp-1">
+                    {b.notes && (
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 bg-slate-50 dark:bg-slate-900/60 p-2 rounded-xl border border-slate-100 dark:border-slate-800 line-clamp-1">
                         📝 {b.notes}
-                      </p>}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -173,31 +178,38 @@ const ScheduleView = ({
                     <Trash2 className="w-4 h-4" />
                   </button>
 
-                  {b.status === "upcoming" && <button
-      onClick={() => onJoinCall(b.interpreterId)}
-      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-emerald-500/20 transition-all"
-    >
+                  {b.status === "upcoming" && (
+                    <button
+                      onClick={() => onJoinCall(b.interpreterId)}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+                    >
                       <Video className="w-4 h-4" />
                       <span>{isToday ? "Join Video Call" : "Prepare Room"}</span>
-                    </button>}
+                    </button>
+                  )}
                 </div>
-              </div>;
-  }) : <div className="bg-white dark:bg-slate-800 p-10 rounded-3xl border border-slate-200 dark:border-slate-700 text-center">
+              </div>
+            );
+          })
+        ) : (
+          <div className="bg-white dark:bg-slate-800 p-10 rounded-3xl border border-slate-200 dark:border-slate-700 text-center">
             <CalendarIcon className="w-12 h-12 text-slate-400 mx-auto mb-3" />
             <h3 className="font-bold text-base text-slate-800 dark:text-slate-200">No {activeFilter} appointments</h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
               You can easily browse certified interpreters and book appointments for your upcoming healthcare, academic, or work meetings.
             </p>
             <button
-    onClick={onOpenDirectory}
-    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
-  >
+              onClick={onOpenDirectory}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
               Browse Interpreter Directory
             </button>
-          </div>}
+          </div>
+        )}
       </div>
 
-    </div>;
+    </div>
+  );
 };
 export {
   ScheduleView
