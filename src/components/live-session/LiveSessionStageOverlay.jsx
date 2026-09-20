@@ -44,7 +44,7 @@ export const LiveSessionStageOverlay = ({
       )}
 
       {/* Real-Time Live Sign Recognition HUD & Captions Overlay */}
-      <div className="absolute bottom-28 inset-x-4 sm:inset-x-12 z-10 flex flex-col items-center space-y-2 pointer-events-auto">
+      <div className="absolute bottom-20 sm:bottom-24 inset-x-2 sm:inset-x-6 md:inset-x-12 z-10 flex flex-col items-center space-y-1.5 sm:space-y-2 pointer-events-auto max-h-[48vh] justify-end">
         <LiveSessionOverlayHUD
           tracker={handTracker}
           onCommitSign={onCommitSign}
@@ -54,30 +54,30 @@ export const LiveSessionStageOverlay = ({
           onTriggerGeminiTranslate={onTriggerGeminiTranslate}
         />
 
-        <div className="w-full max-w-3xl bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl p-4 shadow-2xl text-center relative group">
-          <div className="flex items-center justify-between mb-1.5 text-xs text-indigo-400 font-bold">
-            <span className="flex items-center space-x-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Real-Time Interpretation Stream (Speech & Sign)</span>
+        <div className="w-full max-w-3xl bg-slate-950/90 backdrop-blur-md border border-slate-700/80 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 shadow-2xl text-center relative group">
+          <div className="flex items-center justify-between mb-1 text-[11px] sm:text-xs text-indigo-400 font-bold">
+            <span className="flex items-center space-x-1 truncate mr-2">
+              <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="truncate">Live Interpretation Stream</span>
             </span>
             <button
               onClick={onSpeakCurrentCaption}
-              className={`p-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer ${
+              className={`p-1 sm:p-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0 ${
                 captionSpeaking ? "bg-indigo-600 text-white animate-pulse" : "bg-slate-900"
               }`}
               title="Speak caption aloud"
             >
-              {captionSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+              {captionSpeaking ? <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
             </button>
           </div>
 
           <p
-            className={`font-semibold tracking-wide text-slate-100 ${
+            className={`font-semibold tracking-wide text-slate-100 line-clamp-3 ${
               fontSize === "extra-large"
-                ? "text-xl"
+                ? "text-base sm:text-xl"
                 : fontSize === "large"
-                ? "text-lg"
-                : "text-sm sm:text-base"
+                ? "text-sm sm:text-lg"
+                : "text-xs sm:text-sm"
             }`}
           >
             {currentCaption}

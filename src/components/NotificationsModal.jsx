@@ -66,6 +66,21 @@ const NotificationsModal = ({
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                       {notif.message}
                     </p>
+                    {(notif.type === "session" || notif.type === "call" || notif.roomCode) && (
+                      <div className="mt-2 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectNotification(notif);
+                          }}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-transform active:scale-95"
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>Join (Enter Code)</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>) : <div className="text-center py-10 text-slate-400">

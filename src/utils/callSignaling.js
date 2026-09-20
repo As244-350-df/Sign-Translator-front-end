@@ -1,3 +1,24 @@
+import {
+  deriveE2EEKey,
+  encryptE2EE,
+  decryptE2EE,
+  computeSafetyFingerprint,
+  SecurityValidator
+} from "./security";
+
+/**
+ * Adaptive Video Resolution & Bandwidth Tiers
+ */
+export const ADAPTIVE_TIERS = {
+  "1080p": { key: "1080p", label: "1080p FHD", width: 1920, height: 1080, maxBitrate: 3200000, scaleDown: 1.0, maxFps: 60 },
+  "720p": { key: "720p", label: "720p HD", width: 1280, height: 720, maxBitrate: 1800000, scaleDown: 1.33, maxFps: 30 },
+  "480p": { key: "480p", label: "480p Balanced", width: 854, height: 480, maxBitrate: 900000, scaleDown: 2.0, maxFps: 30 },
+  "360p": { key: "360p", label: "360p Low-Data", width: 640, height: 360, maxBitrate: 450000, scaleDown: 2.8, maxFps: 24 },
+  "240p": { key: "240p", label: "240p Eco / Audio", width: 426, height: 240, maxBitrate: 200000, scaleDown: 4.0, maxFps: 15 }
+};
+
+const TIER_ORDER = ["1080p", "720p", "480p", "360p", "240p"];
+
 /**
  * Enterprise Multi-User WebRTC & WebSocket Signaling Engine
  * Provides dual-layer communication:
@@ -6,6 +27,8 @@
  * 3. Direct WebSocket video frame streaming fallback (guarantees peer video visibility
  *    under restrictive firewalls, cellular networks, or sandboxed iframes).
  * 4. Dual-direction Media Status synchronization (Microphone, Camera, Hand-Raise, Chat).
+ * 5. Hardware-accelerated WebCrypto End-to-End Encryption (AES-GCM-256).
+ * 6. Real-time WebRTC Performance Monitoring & Adaptive Resolution Controller.
  */
 
 export class CallSignalingEngine {
@@ -22,6 +45,7 @@ export class CallSignalingEngine {
     this.onPeerMediaStatus = null;
     this.onRemoteChatMessage = null;
     this.onRemoteHandRaise = null;
+    this.onRemoteTranslatedMessage = null;
 
     this.role = "client"; // 'client' | 'interpreter'
     this.userInfo = {};
@@ -34,9 +58,66 @@ export class CallSignalingEngine {
     this.reconnectTimer = null;
     this.pingInterval = null;
     this.pendingIceCandidates = [];
+    this.remoteMediaStream = null;
+    this.makingOffer = false;
+    this.isPolite = false;
 
+    // End-to-End Encryption (E2EE) State
+    this.e2eeKey = null;
+    this.safetyNumber = "----";
+    this.e2eeActive = false;
+    this.onE2EEStatusChange = null;
+
+    // WebRTC Real-Time Performance Monitor & Adaptive Controller
+    this.statsInterval = null;
+    this.prevStatsSample = null;
+    this.statsHistory = [];
+    this.currentMetrics = {
+      bitrateRecvKbps: 0,
+      bitrateSentKbps: 0,
+      fpsRecv: 0,
+      fpsSent: 0,
+      resolutionRecv: "1280x720",
+      resolutionSent: "1280x720",
+      jitterMs: 0,
+      rttMs: 25,
+      packetsLost: 0,
+      packetLossPercentage: 0,
+      videoCodec: "VP9",
+      audioCodec: "Opus",
+      health: "excellent",
+      tier: "720p",
+      tierConfig: ADAPTIVE_TIERS["720p"],
+      qualityMode: "auto",
+      adaptationReason: "Optimal initial stream configuration"
+    };
+    this.qualityMode = "auto";
+    this.currentQualityTier = "720p";
+    this.degradeStreak = 0;
+    this.healthyStreak = 0;
+    this.onStatsUpdate = null;
+    this.onQualityTierChange = null;
+    this.onSecurityAlert = null;
+
+    this.initE2EE();
     this.initBroadcastChannel();
     this.connectWebSocket();
+  }
+
+  async initE2EE() {
+    try {
+      this.e2eeKey = await deriveE2EEKey(this.roomId);
+      this.safetyNumber = await computeSafetyFingerprint(this.roomId);
+      this.e2eeActive = true;
+      if (this.onE2EEStatusChange) {
+        this.onE2EEStatusChange({
+          active: true,
+          safetyNumber: this.safetyNumber
+        });
+      }
+    } catch (err) {
+      console.warn("[Signaling E2EE] Key derivation error:", err);
+    }
   }
 
   initBroadcastChannel() {
@@ -213,23 +294,54 @@ export class CallSignalingEngine {
     } catch (e) {}
   }
 
-  sendChatMessage(messageText) {
+  async sendChatMessage(messageText) {
+    const cleanText = SecurityValidator.sanitizeText(messageText, 1500);
+    if (!cleanText) return;
+
+    let payloadMessage = cleanText;
+    let isEncrypted = false;
+    if (this.e2eeKey) {
+      try {
+        payloadMessage = await encryptE2EE(cleanText, this.e2eeKey);
+        isEncrypted = true;
+      } catch (e) {
+        console.warn("[E2EE] Fallback to plaintext for chat message:", e);
+      }
+    }
+
     this.sendMessage({
       type: "CHAT_MESSAGE",
-      message: messageText,
-      senderName: this.userInfo?.name || (this.localRole === "interpreter" ? "Elena Rostova" : "Alex Morgan")
+      message: payloadMessage,
+      isEncrypted,
+      senderName: this.userInfo?.name || (this.role === "interpreter" ? "Elena Rostova" : "Alex Morgan")
     });
   }
 
-  sendTranslatedMessage(payload) {
+  async sendTranslatedMessage(payload) {
+    const rawText = typeof payload === "string" ? payload : payload.text;
+    const cleanText = SecurityValidator.sanitizeText(rawText, 1500);
+    if (!cleanText) return;
+
+    let payloadText = cleanText;
+    let isEncrypted = false;
+    if (this.e2eeKey) {
+      try {
+        payloadText = await encryptE2EE(cleanText, this.e2eeKey);
+        isEncrypted = true;
+      } catch (e) {
+        console.warn("[E2EE] Fallback to plaintext for translation:", e);
+      }
+    }
+
     this.sendMessage({
       type: "TRANSLATED_MESSAGE",
-      text: typeof payload === "string" ? payload : payload.text,
+      text: payloadText,
       symbol: payload.symbol || "",
       signLanguage: payload.signLanguage || "ASL",
       confidence: payload.confidence || 0.98,
       isAi: !!payload.isAi,
-      senderName: this.userInfo?.name || (this.localRole === "interpreter" ? "Elena Rostova" : "Alex Morgan")
+      isEncrypted,
+      senderName: this.userInfo?.name || (this.role === "interpreter" ? "Elena Rostova" : "Alex Morgan")
     });
   }
 
@@ -252,6 +364,7 @@ export class CallSignalingEngine {
           this.remotePeerId = peer.senderId;
           this.remotePeerRole = peer.role;
           this.remotePeerInfo = peer.userInfo;
+          this.isPolite = this.instanceId > peer.senderId;
 
           if (this.onPeerStateChange) {
             this.onPeerStateChange({
@@ -259,7 +372,8 @@ export class CallSignalingEngine {
               peerRole: peer.role,
               peerInfo: peer.userInfo,
               mediaStatus: peer.mediaStatus,
-              transport: source
+              transport: source,
+              expiresAt: data.expiresAt
             });
           }
 
@@ -267,7 +381,7 @@ export class CallSignalingEngine {
             this.onPeerMediaStatus(peer.mediaStatus);
           }
 
-          // As the newcomer, start WebRTC offer to existing peer
+          // As the newcomer, initiate WebRTC offer
           if (this.localStream) {
             this.startWebRTC(true);
           }
@@ -281,6 +395,7 @@ export class CallSignalingEngine {
         this.remotePeerId = peer.senderId;
         this.remotePeerRole = peer.role;
         this.remotePeerInfo = peer.userInfo;
+        this.isPolite = this.instanceId > peer.senderId;
 
         if (this.onPeerStateChange) {
           this.onPeerStateChange({
@@ -296,13 +411,13 @@ export class CallSignalingEngine {
           this.onPeerMediaStatus(peer.mediaStatus);
         }
 
-        // We are existing peer; if newcomer didn't initiate within 1.5s, initiate offer
-        if (this.localStream && !this.peerConnection) {
+        // If newcomer hasn't initiated after 1s and we are impolite, initiate offer
+        if (this.localStream && !this.peerConnection && !this.isPolite) {
           setTimeout(() => {
             if (!this.peerConnection && !this.isConnected) {
               this.startWebRTC(true);
             }
-          }, 1500);
+          }, 800);
         }
         break;
       }
@@ -327,12 +442,21 @@ export class CallSignalingEngine {
       }
 
       case "CHAT_MESSAGE": {
-        if (data.message && this.onRemoteChatMessage) {
+        let msgText = data.message;
+        if (data.isEncrypted && this.e2eeKey) {
+          try {
+            msgText = await decryptE2EE(msgText, this.e2eeKey);
+          } catch (e) {
+            console.warn("[E2EE] Could not decrypt chat message:", e);
+          }
+        }
+        if (this.onRemoteChatMessage) {
           this.onRemoteChatMessage(
             {
-              text: data.message,
+              text: msgText,
               senderName: data.senderName,
-              senderId: data.senderId
+              senderId: data.senderId,
+              isEncrypted: !!data.isEncrypted
             },
             data.senderId
           );
@@ -341,14 +465,24 @@ export class CallSignalingEngine {
       }
 
       case "TRANSLATED_MESSAGE": {
+        let transText = data.text;
+        if (data.isEncrypted && this.e2eeKey) {
+          try {
+            transText = await decryptE2EE(transText, this.e2eeKey);
+          } catch (e) {
+            console.warn("[E2EE] Could not decrypt translated text:", e);
+          }
+        }
+        const cleanPayload = { ...data, text: transText };
         if (this.onRemoteTranslatedMessage) {
-          this.onRemoteTranslatedMessage(data, data.senderId);
+          this.onRemoteTranslatedMessage(cleanPayload, data.senderId);
         } else if (this.onRemoteChatMessage) {
           this.onRemoteChatMessage(
             {
-              text: data.symbol ? `${data.symbol} ${data.text}` : data.text,
+              text: data.symbol ? `${data.symbol} ${transText}` : transText,
               senderName: data.senderName,
               isTranslated: true,
+              isEncrypted: !!data.isEncrypted,
               symbol: data.symbol,
               confidence: data.confidence,
               isAi: data.isAi,
@@ -363,6 +497,22 @@ export class CallSignalingEngine {
       case "HAND_RAISE": {
         if (this.onRemoteHandRaise) {
           this.onRemoteHandRaise(data.isHandRaised, data.senderId);
+        }
+        break;
+      }
+
+      case "ERROR": {
+        console.warn("[Signaling Security Alert]", data.code, data.message);
+        if (this.onSecurityAlert) {
+          this.onSecurityAlert({ code: data.code, message: data.message });
+        }
+        break;
+      }
+
+      case "RATE_LIMITED": {
+        console.warn("[Signaling Security] Flood protection trigger:", data.message);
+        if (this.onSecurityAlert) {
+          this.onSecurityAlert({ code: "RATE_LIMITED", message: data.message });
         }
         break;
       }
@@ -412,8 +562,10 @@ export class CallSignalingEngine {
         iceServers: [
           { urls: "stun:stun.l.google.com:19302" },
           { urls: "stun:stun1.l.google.com:19302" },
-          { urls: "stun:stun2.l.google.com:19302" }
-        ]
+          { urls: "stun:stun2.l.google.com:19302" },
+          { urls: "stun:stun.services.mozilla.com" }
+        ],
+        iceCandidatePoolSize: 4
       };
 
       const pc = new RTCPeerConnection(config);
@@ -430,20 +582,35 @@ export class CallSignalingEngine {
         });
       }
 
-      // Incoming remote stream tracks
+      // Incoming remote stream tracks - robust aggregation for modern browsers
       pc.ontrack = (event) => {
-        const [remoteStream] = event.streams;
-        if (remoteStream && this.onRemoteStream) {
-          this.isConnected = true;
-          this.onRemoteStream(remoteStream);
-          if (this.onPeerStateChange) {
-            this.onPeerStateChange({
-              status: "connected",
-              peerRole: this.remotePeerRole,
-              peerInfo: this.remotePeerInfo,
-              transport: "webrtc"
-            });
+        if (!this.remoteMediaStream) {
+          this.remoteMediaStream = new MediaStream();
+        }
+
+        if (event.streams && event.streams[0]) {
+          event.streams[0].getTracks().forEach((track) => {
+            if (!this.remoteMediaStream.getTracks().some((t) => t.id === track.id)) {
+              this.remoteMediaStream.addTrack(track);
+            }
+          });
+        } else if (event.track) {
+          if (!this.remoteMediaStream.getTracks().some((t) => t.id === event.track.id)) {
+            this.remoteMediaStream.addTrack(event.track);
           }
+        }
+
+        this.isConnected = true;
+        if (this.onRemoteStream) {
+          this.onRemoteStream(this.remoteMediaStream);
+        }
+        if (this.onPeerStateChange) {
+          this.onPeerStateChange({
+            status: "connected",
+            peerRole: this.remotePeerRole,
+            peerInfo: this.remotePeerInfo,
+            transport: "webrtc"
+          });
         }
       };
 
@@ -460,6 +627,7 @@ export class CallSignalingEngine {
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") {
           this.isConnected = true;
+          this.startStatsMonitoring(1500);
           if (this.onPeerStateChange) {
             this.onPeerStateChange({
               status: "connected",
@@ -470,6 +638,7 @@ export class CallSignalingEngine {
           }
         } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
           this.isConnected = false;
+          this.stopStatsMonitoring();
           if (this.onPeerStateChange) {
             this.onPeerStateChange({
               status: "degraded",
@@ -480,17 +649,20 @@ export class CallSignalingEngine {
       };
 
       if (isInitiator) {
+        this.makingOffer = true;
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
         });
         await pc.setLocalDescription(offer);
+        this.makingOffer = false;
         this.sendMessage({
           type: "WEBRTC_OFFER",
           offer
         });
       }
     } catch (err) {
+      this.makingOffer = false;
       console.warn("[Signaling WebRTC] Setup notice:", err?.message || err);
     }
   }
@@ -502,7 +674,7 @@ export class CallSignalingEngine {
       try {
         await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.warn("[Signaling WebRTC] Buffered ICE candidate add notice:", err);
+        console.warn("[Signaling WebRTC] Buffered ICE candidate notice:", err);
       }
     }
   }
@@ -515,7 +687,20 @@ export class CallSignalingEngine {
     if (!pc) return;
 
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const isCollision = this.makingOffer || (pc.signalingState !== "stable" && pc.signalingState !== "have-local-offer");
+      if (isCollision) {
+        if (!this.isPolite) {
+          console.log("[Signaling WebRTC] Glare collision: impolite peer discarding offer.");
+          return;
+        }
+        await Promise.all([
+          pc.setLocalDescription({ type: "rollback" }),
+          pc.setRemoteDescription(new RTCSessionDescription(offer))
+        ]);
+      } else {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      }
+
       await this.drainPendingIceCandidates();
 
       const answer = await pc.createAnswer();
@@ -534,8 +719,10 @@ export class CallSignalingEngine {
     const pc = this.peerConnection;
     if (!pc) return;
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      await this.drainPendingIceCandidates();
+      if (pc.signalingState === "have-local-offer" || pc.signalingState === "have-remote-pranswer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await this.drainPendingIceCandidates();
+      }
     } catch (err) {
       console.warn("[Signaling WebRTC] Error handling answer:", err);
     }
@@ -556,7 +743,212 @@ export class CallSignalingEngine {
     }
   }
 
+  startStatsMonitoring(intervalMs = 1500) {
+    if (this.statsInterval) clearInterval(this.statsInterval);
+    this.statsInterval = setInterval(async () => {
+      await this.collectPeerStats();
+    }, intervalMs);
+    // Initial run
+    setTimeout(() => this.collectPeerStats(), 400);
+  }
+
+  stopStatsMonitoring() {
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
+    this.prevStatsSample = null;
+  }
+
+  async collectPeerStats() {
+    if (!this.peerConnection || this.isDestroyed) return;
+    try {
+      const stats = await this.peerConnection.getStats();
+      const now = Date.now();
+      let bytesRecv = 0;
+      let bytesSent = 0;
+      let framesDecoded = 0;
+      let framesSent = 0;
+      let frameWidthRecv = 0;
+      let frameHeightRecv = 0;
+      let frameWidthSent = 0;
+      let frameHeightSent = 0;
+      let jitter = 0;
+      let rtt = 25;
+      let packetsLost = 0;
+      let packetsReceived = 0;
+      let videoCodec = "VP9";
+      let audioCodec = "Opus";
+
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp" && report.kind === "video") {
+          bytesRecv += report.bytesReceived || 0;
+          framesDecoded += report.framesDecoded || 0;
+          packetsLost += report.packetsLost || 0;
+          packetsReceived += report.packetsReceived || 0;
+          if (report.frameWidth) frameWidthRecv = report.frameWidth;
+          if (report.frameHeight) frameHeightRecv = report.frameHeight;
+          if (report.jitter !== undefined) jitter = report.jitter * 1000;
+        } else if (report.type === "outbound-rtp" && report.kind === "video") {
+          bytesSent += report.bytesSent || 0;
+          framesSent += report.framesSent || 0;
+          if (report.frameWidth) frameWidthSent = report.frameWidth;
+          if (report.frameHeight) frameHeightSent = report.frameHeight;
+        } else if (report.type === "candidate-pair" && (report.state === "succeeded" || report.nominated)) {
+          if (report.currentRoundTripTime !== undefined) {
+            rtt = Math.round(report.currentRoundTripTime * 1000);
+          }
+        } else if (report.type === "codec") {
+          if (report.mimeType?.toLowerCase().includes("video")) {
+            videoCodec = report.mimeType.replace(/^video\//i, "").toUpperCase();
+          } else if (report.mimeType?.toLowerCase().includes("audio")) {
+            audioCodec = report.mimeType.replace(/^audio\//i, "").toUpperCase();
+          }
+        }
+      });
+
+      let bitrateRecvKbps = 0;
+      let bitrateSentKbps = 0;
+      let fpsRecv = 0;
+      let fpsSent = 0;
+
+      if (this.prevStatsSample) {
+        const timeDiffSec = (now - this.prevStatsSample.timestamp) / 1000;
+        if (timeDiffSec > 0) {
+          bitrateRecvKbps = Math.round(((bytesRecv - this.prevStatsSample.bytesRecv) * 8) / (timeDiffSec * 1000));
+          bitrateSentKbps = Math.round(((bytesSent - this.prevStatsSample.bytesSent) * 8) / (timeDiffSec * 1000));
+          fpsRecv = Math.round((framesDecoded - this.prevStatsSample.framesDecoded) / timeDiffSec);
+          fpsSent = Math.round((framesSent - this.prevStatsSample.framesSent) / timeDiffSec);
+        }
+      }
+
+      this.prevStatsSample = {
+        timestamp: now,
+        bytesRecv,
+        bytesSent,
+        framesDecoded,
+        framesSent
+      };
+
+      const totalPackets = packetsLost + packetsReceived;
+      const packetLossPercentage = totalPackets > 0 ? Math.min(100, Math.round((packetsLost / totalPackets) * 1000) / 10) : 0;
+
+      // Calculate connection health
+      let health = "excellent";
+      if (packetLossPercentage > 7 || rtt > 320) {
+        health = "poor";
+      } else if (packetLossPercentage > 2.5 || rtt > 180 || jitter > 60) {
+        health = "fair";
+      } else if (packetLossPercentage > 0.8 || rtt > 95) {
+        health = "good";
+      }
+
+      // Adaptive Resolution Logic
+      if (this.qualityMode === "auto") {
+        const currentIdx = TIER_ORDER.indexOf(this.currentQualityTier);
+        if (packetLossPercentage > 4.0 || rtt > 260 || jitter > 60) {
+          this.degradeStreak++;
+          this.healthyStreak = 0;
+          if (this.degradeStreak >= 2 && currentIdx < TIER_ORDER.length - 1) {
+            const nextTier = TIER_ORDER[currentIdx + 1];
+            this.applyQualityTier(nextTier, `Network congestion detected (loss: ${packetLossPercentage}%, RTT: ${rtt}ms)`);
+            this.degradeStreak = 0;
+          }
+        } else if (packetLossPercentage <= 0.8 && rtt < 120 && jitter < 30) {
+          this.healthyStreak++;
+          this.degradeStreak = 0;
+          if (this.healthyStreak >= 4 && currentIdx > 0) {
+            const prevTier = TIER_ORDER[currentIdx - 1];
+            this.applyQualityTier(prevTier, `Network conditions stable and clear (RTT: ${rtt}ms)`);
+            this.healthyStreak = 0;
+          }
+        }
+      }
+
+      const activeConfig = ADAPTIVE_TIERS[this.currentQualityTier] || ADAPTIVE_TIERS["720p"];
+      const metrics = {
+        bitrateRecvKbps: Math.max(0, bitrateRecvKbps),
+        bitrateSentKbps: Math.max(0, bitrateSentKbps),
+        fpsRecv: Math.max(0, fpsRecv),
+        fpsSent: Math.max(0, fpsSent),
+        resolutionRecv: frameWidthRecv && frameHeightRecv ? `${frameWidthRecv}x${frameHeightRecv}` : `${activeConfig.width}x${activeConfig.height}`,
+        resolutionSent: frameWidthSent && frameHeightSent ? `${frameWidthSent}x${frameHeightSent}` : `${activeConfig.width}x${activeConfig.height}`,
+        jitterMs: Math.round(jitter),
+        rttMs: Math.max(1, rtt),
+        packetsLost,
+        packetLossPercentage,
+        videoCodec,
+        audioCodec,
+        health,
+        tier: this.currentQualityTier,
+        tierConfig: activeConfig,
+        qualityMode: this.qualityMode,
+        safetyNumber: this.safetyNumber,
+        e2eeActive: !!this.e2eeKey
+      };
+
+      this.currentMetrics = metrics;
+      this.statsHistory.push({
+        time: new Date().toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        bitrate: bitrateRecvKbps || bitrateSentKbps || 1200,
+        fps: fpsRecv || fpsSent || 30,
+        rtt: rtt || 25,
+        loss: packetLossPercentage
+      });
+      if (this.statsHistory.length > 25) {
+        this.statsHistory.shift();
+      }
+
+      if (this.onStatsUpdate) {
+        this.onStatsUpdate(metrics, this.statsHistory);
+      }
+    } catch (err) {
+      console.warn("[Signaling Stats] Collection warning:", err?.message);
+    }
+  }
+
+  async setQualityMode(mode, manualTier = null) {
+    this.qualityMode = mode === "manual" ? "manual" : "auto";
+    if (manualTier && ADAPTIVE_TIERS[manualTier]) {
+      await this.applyQualityTier(manualTier, "User manual quality override");
+    } else if (mode === "auto") {
+      this.degradeStreak = 0;
+      this.healthyStreak = 0;
+    }
+  }
+
+  async applyQualityTier(tierKey, reason = "") {
+    if (!ADAPTIVE_TIERS[tierKey]) return;
+    this.currentQualityTier = tierKey;
+    const config = ADAPTIVE_TIERS[tierKey];
+    console.log(`[Signaling Adaptive] Switching to tier ${tierKey} (${config.label}) - ${reason}`);
+
+    if (this.peerConnection) {
+      try {
+        const senders = this.peerConnection.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === "video");
+        if (videoSender) {
+          const params = videoSender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].scaleResolutionDownBy = config.scaleDown;
+          params.encodings[0].maxBitrate = config.maxBitrate;
+          params.encodings[0].maxFramerate = config.maxFps;
+          await videoSender.setParameters(params);
+        }
+      } catch (err) {
+        console.warn("[Signaling Adaptive] setParameters warning:", err);
+      }
+    }
+
+    if (this.onQualityTierChange) {
+      this.onQualityTierChange(tierKey, reason, config);
+    }
+  }
+
   closePeerConnection() {
+    this.stopStatsMonitoring();
     this.pendingIceCandidates = [];
     if (this.peerConnection) {
       try {
@@ -569,6 +961,7 @@ export class CallSignalingEngine {
 
   destroy() {
     this.isDestroyed = true;
+    this.stopStatsMonitoring();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.pingInterval) clearInterval(this.pingInterval);
 

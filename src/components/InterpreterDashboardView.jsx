@@ -107,7 +107,7 @@ const IncomingCallAlertCard = ({ call, onAccept, onDecline }) => {
           className="px-6 py-2.5 rounded-xl bg-white text-emerald-700 hover:bg-slate-100 text-xs font-extrabold shadow-lg transition-all active:scale-95 flex items-center space-x-1.5 cursor-pointer"
         >
           <Video className="w-4 h-4" />
-          <span>Accept & Join Room</span>
+          <span>Join Call (Enter Code)</span>
         </button>
       </div>
     </div>

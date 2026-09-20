@@ -77,21 +77,35 @@ export const useLiveSessionCallMedia = ({
           s = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: cameraFacing ? { ideal: cameraFacing } : undefined,
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 30, max: 60 }
             },
-            audio: true
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
           });
         } catch {
           try {
             s = await navigator.mediaDevices.getUserMedia({
-              video: cameraFacing ? { facingMode: { ideal: cameraFacing } } : true,
-              audio: false
+              video: cameraFacing
+                ? { facingMode: { ideal: cameraFacing }, frameRate: { ideal: 30, max: 60 } }
+                : { frameRate: { ideal: 30, max: 60 } },
+              audio: true
             });
-          } catch (err) {
-            console.warn("Local webcam acquisition failed:", err);
-            if (!isCancelled) setUseRealCameraLocal(false);
-            return;
+          } catch {
+            try {
+              s = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false
+              });
+            } catch (err) {
+              console.warn("Local webcam acquisition failed:", err);
+              if (!isCancelled) setUseRealCameraLocal(false);
+              return;
+            }
           }
         }
 
@@ -132,12 +146,31 @@ export const useLiveSessionCallMedia = ({
     };
   }, [useRealCameraLocal, cameraFacing, setUseRealCameraLocal, attachStreamToVideos]);
 
+  // Dynamically apply adaptive video resolution & framerate constraints to live camera track
+  const applyStreamConstraints = useCallback(async (tierConfig) => {
+    if (!localStreamRef.current || !tierConfig) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (videoTrack && typeof videoTrack.applyConstraints === "function") {
+      try {
+        await videoTrack.applyConstraints({
+          width: { ideal: tierConfig.width },
+          height: { ideal: tierConfig.height },
+          frameRate: { ideal: tierConfig.maxFps || 30 }
+        });
+        console.log(`[MediaConstraints] Applied adaptive stream constraints: ${tierConfig.width}x${tierConfig.height} @ ${tierConfig.maxFps}fps`);
+      } catch (err) {
+        console.warn("[MediaConstraints] Adaptive applyConstraints notice:", err?.message);
+      }
+    }
+  }, []);
+
   return {
     localVideoRef,
     mainVideoRef,
     localStreamRef,
     localStream,
-    attachStreamToVideos
+    attachStreamToVideos,
+    applyStreamConstraints
   };
 };
 

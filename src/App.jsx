@@ -60,6 +60,9 @@ function App() {
   const [errorModalType, setErrorModalType] = useState(null);
   const [initialCallPerspective, setInitialCallPerspective] = useState(null);
   const [isJoinRoomOpen, setIsJoinRoomOpen] = useState(false);
+  const [joinRoomInitialCode, setJoinRoomInitialCode] = useState("room-4927");
+  const [joinRoomInitialRole, setJoinRoomInitialRole] = useState("client");
+  const [joinRoomCallContext, setJoinRoomCallContext] = useState(null);
 
   useEffect(() => {
     try {
@@ -110,6 +113,14 @@ function App() {
       setInitialCallPerspective(role);
     }
     setIsCallActive(true);
+  };
+
+  const handlePromptJoinIncomingCall = (call, defaultRole = "interpreter") => {
+    const code = call?.meetingRoomId || call?.sessionId || call?.interpreterId || "room-4927";
+    setJoinRoomInitialCode(code);
+    setJoinRoomInitialRole(defaultRole);
+    setJoinRoomCallContext(call);
+    setIsJoinRoomOpen(true);
   };
 
   const handleEndCall = async () => {
@@ -174,26 +185,53 @@ function App() {
     /* App Top Header Bar */
   }
       <Header
-    user={user}
-    settings={settings}
-    onUpdateSettings={handleUpdateSettings}
-    activeTab={activeTab}
-    onChangeTab={setActiveTab}
-    onToggleRole={handleToggleRole}
-    notifications={notifications}
-    onOpenNotifications={() => setIsNotificationsOpen(true)}
-    onOpenAuth={() => setIsAuthOpen(true)}
-    onOpenExportZip={() => setIsExportZipOpen(true)}
-    onOpenArchitecture={() => setIsArchitectureOpen(true)}
-    onOpenJoinRoom={() => setIsJoinRoomOpen(true)}
-    onStartLiveCall={() => handleStartCall("room-4927")}
-    isCallActive={isCallActive}
-  />
+        user={user}
+        settings={settings}
+        onUpdateSettings={handleUpdateSettings}
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        onToggleRole={handleToggleRole}
+        notifications={notifications}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenExportZip={() => setIsExportZipOpen(true)}
+        onOpenArchitecture={() => setIsArchitectureOpen(true)}
+        onOpenJoinRoom={() => {
+          setJoinRoomCallContext(null);
+          setJoinRoomInitialCode("room-4927");
+          setJoinRoomInitialRole(user?.role === "interpreter" ? "interpreter" : "client");
+          setIsJoinRoomOpen(true);
+        }}
+        onStartLiveCall={() => {
+          setJoinRoomCallContext(null);
+          setJoinRoomInitialCode("room-4927");
+          setJoinRoomInitialRole(user?.role === "interpreter" ? "interpreter" : "client");
+          setIsJoinRoomOpen(true);
+        }}
+        onEndCall={handleEndCall}
+        onToggleLiveMode={(enable) => {
+          if (enable) {
+            setJoinRoomCallContext(null);
+            setJoinRoomInitialCode("room-4927");
+            setJoinRoomInitialRole(user?.role === "interpreter" ? "interpreter" : "client");
+            setIsJoinRoomOpen(true);
+          } else {
+            handleEndCall();
+          }
+        }}
+        isCallActive={isCallActive}
+      />
 
       {
     /* Main Content Body */
   }
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8">
+      <main
+        className={`flex-1 w-full mx-auto ${
+          isCallActive
+            ? "max-w-7xl px-2 sm:px-4 py-2 sm:py-3 flex flex-col min-h-0 h-[calc(100dvh-4.5rem)] overflow-hidden"
+            : "max-w-7xl px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8"
+        }`}
+      >
         {isCallActive ? (
     /* Live 2-Way Human Sign Language Interpreter Video Room */
     <LiveSessionCallView
@@ -203,52 +241,60 @@ function App() {
       settings={settings}
     />
   ) : <>
-            {
-    /* AI Real-Time Camera Gesture Translator View */
-  }
+            {/* AI Real-Time Camera Gesture Translator View */}
             {activeTab === "translate" && <LiveTranslateView
-    settings={settings}
-    onUpdateSettings={handleUpdateSettings}
-    onOpenLiveCall={handleStartCall}
-    onOpenKeyboard={() => setActiveTab("keyboard")}
-    onOpenTutorial={() => setIsTutorialOpen(true)}
-  />}
+              settings={settings}
+              onUpdateSettings={handleUpdateSettings}
+              onOpenLiveCall={() => {
+                setJoinRoomCallContext(null);
+                setJoinRoomInitialCode("room-4927");
+                setJoinRoomInitialRole("client");
+                setIsJoinRoomOpen(true);
+              }}
+              onOpenKeyboard={() => setActiveTab("keyboard")}
+              onOpenTutorial={() => setIsTutorialOpen(true)}
+            />}
 
-            {
-    /* Virtual Sign Language Keyboard & Fingerspelling */
-  }
+            {/* Virtual Sign Language Keyboard & Fingerspelling */}
             {activeTab === "keyboard" && <SignKeyboardView
-    settings={settings}
-    onOpenTutorial={() => setIsTutorialOpen(true)}
-  />}
+              settings={settings}
+              onOpenTutorial={() => setIsTutorialOpen(true)}
+            />}
 
-            {
-    /* Certified Interpreters Directory */
-  }
+            {/* Certified Interpreters Directory */}
             {activeTab === "directory" && <InterpreterDirectoryView
-    settings={settings}
-    onSelectInterpreter={(int) => setSelectedInterpreter(int)}
-    onStartCall={handleStartCall}
-    onBookAppointment={(int) => setSelectedInterpreter(int)}
-  />}
+              settings={settings}
+              onSelectInterpreter={(int) => setSelectedInterpreter(int)}
+              onStartCall={(target) => {
+                const targetCode = typeof target === "string" ? target : (target?.id || target?.interpreterId || "room-4927");
+                handlePromptJoinIncomingCall({
+                  sessionId: targetCode,
+                  clientName: typeof target === "object" ? target?.name : "Interpreter",
+                  notes: "Live Call"
+                }, "client");
+              }}
+              onBookAppointment={(int) => setSelectedInterpreter(int)}
+            />}
 
-            {
-    /* Appointments & Schedule */
-  }
+            {/* Appointments & Schedule */}
             {activeTab === "schedule" && <ScheduleView
-    settings={settings}
-    onJoinCall={handleStartCall}
-    onOpenDirectory={() => setActiveTab("directory")}
-  />}
+              settings={settings}
+              onJoinCall={(target) => {
+                const targetCode = typeof target === "string" ? target : (target?.id || target?.interpreterId || "room-4927");
+                handlePromptJoinIncomingCall({
+                  sessionId: targetCode,
+                  notes: "Scheduled Appointment"
+                }, "client");
+              }}
+              onOpenDirectory={() => setActiveTab("directory")}
+            />}
 
-            {
-    /* Interpreter Professional Portal */
-  }
+            {/* Interpreter Professional Portal */}
             {activeTab === "interpreter_dashboard" && <InterpreterDashboardView
-    user={user}
-    settings={settings}
-    onAcceptIncomingCall={(call) => handleStartCall(call?.meetingRoomId || call?.sessionId || call?.interpreterId || "int-01", "interpreter")}
-  />}
+              user={user}
+              settings={settings}
+              onAcceptIncomingCall={(call) => handlePromptJoinIncomingCall(call, "interpreter")}
+            />}
 
             {
     /* Historical Session Transcripts */
@@ -380,13 +426,19 @@ function App() {
         currentUserId={user?.userId || user?.id || firebaseUser?.uid}
         currentUserName={user?.name || "Participant"}
         isCallActive={isCallActive}
-        onAcceptCall={(call) => handleStartCall(call?.meetingRoomId || call?.sessionId || call?.interpreterId || "int-01", "interpreter")}
+        onAcceptCall={(call) => handlePromptJoinIncomingCall(call, "interpreter")}
       />
 
       {/* Cross-Device Join Room Modal */}
       <JoinRoomModal
         isOpen={isJoinRoomOpen}
-        onClose={() => setIsJoinRoomOpen(false)}
+        onClose={() => {
+          setIsJoinRoomOpen(false);
+          setJoinRoomCallContext(null);
+        }}
+        initialRoomCode={joinRoomInitialCode}
+        initialRole={joinRoomInitialRole}
+        callContext={joinRoomCallContext}
         onJoinRoom={(roomId, role) => handleStartCall(roomId, role)}
       />
 

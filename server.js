@@ -12,10 +12,10 @@ const httpServer = http.createServer(app);
 
 // ========================================================
 // Real-Time Live Session WebSocket Signaling & Video Relay
-// Supports WebRTC exchange, peer presence, media status,
-// and low-latency video frame stream between users in room
+// With Enterprise Rate Limiting, Input Validation, and 7-Day Session TTL
 // ========================================================
-const callRooms = new Map(); // roomId -> Set of client objects
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const callRooms = new Map(); // roomId -> { clients: Set, createdAt: number, lastActiveAt: number }
 
 const wss = new WebSocketServer({
   server: httpServer,
@@ -26,8 +26,10 @@ const wss = new WebSocketServer({
 function broadcastToRoom(roomId, message, senderWs = null) {
   const room = callRooms.get(roomId);
   if (!room) return;
+  room.lastActiveAt = Date.now();
+  const clients = room.clients || room;
   const payload = typeof message === "string" ? message : JSON.stringify(message);
-  for (const client of room) {
+  for (const client of clients) {
     if (client.ws !== senderWs && client.ws.readyState === WebSocket.OPEN) {
       try {
         client.ws.send(payload);
@@ -40,6 +42,7 @@ function broadcastToRoom(roomId, message, senderWs = null) {
 
 wss.on("connection", (ws, req) => {
   let currentClient = null;
+  ws.messageTimestamps = [];
 
   ws.isAlive = true;
   ws.on("pong", () => {
@@ -48,27 +51,86 @@ wss.on("connection", (ws, req) => {
 
   ws.on("message", (raw) => {
     try {
+      // WebSocket flood & rate limiting protection (Max 40 messages per second)
+      const now = Date.now();
+      ws.messageTimestamps = ws.messageTimestamps.filter((t) => now - t < 1000);
+      if (ws.messageTimestamps.length >= 40) {
+        if (ws.messageTimestamps.length === 40) {
+          try {
+            ws.send(JSON.stringify({
+              type: "RATE_LIMITED",
+              message: "Security Notice: Rate limit reached (max 40 msg/sec). Message throttled."
+            }));
+          } catch {}
+        }
+        return;
+      }
+      ws.messageTimestamps.push(now);
+
       const data = JSON.parse(raw.toString());
       const { type, roomId, senderId } = data;
 
+      // Basic schema verification
+      if (!type || typeof type !== "string") return;
+
       switch (type) {
         case "JOIN_ROOM": {
-          const roomKey = roomId || "default-call-room";
-          if (!callRooms.has(roomKey)) {
-            callRooms.set(roomKey, new Set());
+          const rawRoomKey = typeof roomId === "string" ? roomId.trim() : "default-call-room";
+          
+          // Strict input validation on room code: alphanumeric, underscores, hyphens, 3-64 chars
+          if (!/^[a-zA-Z0-9_\-]{3,64}$/.test(rawRoomKey)) {
+            ws.send(JSON.stringify({
+              type: "ERROR",
+              code: "INVALID_ROOM_CODE",
+              message: "Validation Error: Room code must be 3-64 characters and contain only letters, numbers, hyphens, and underscores."
+            }));
+            return;
           }
-          const room = callRooms.get(roomKey);
+
+          const roomKey = rawRoomKey;
+          let roomEntry = callRooms.get(roomKey);
+
+          // 7-Day Session Expiration Check
+          if (roomEntry && (now - roomEntry.createdAt > SEVEN_DAYS_MS)) {
+            console.warn(`[WS] Blocked join to expired room ${roomKey} (Created > 7 days ago)`);
+            ws.send(JSON.stringify({
+              type: "ERROR",
+              code: "ROOM_EXPIRED",
+              message: "Security Notice: This call session expired after 7 days. Please start a new session."
+            }));
+            return;
+          }
+
+          if (!roomEntry) {
+            roomEntry = {
+              clients: new Set(),
+              createdAt: now,
+              lastActiveAt: now
+            };
+            callRooms.set(roomKey, roomEntry);
+          }
+          const room = roomEntry.clients;
+
+          // Sanitize sender info
+          const cleanSenderId = (typeof senderId === "string" && senderId.slice(0, 64)) || `user-${Date.now()}`;
+          const cleanRole = data.role === "interpreter" ? "interpreter" : "client";
+          const rawName = data.userInfo?.name || "Participant";
+          const cleanName = String(rawName).replace(/<[^>]*>?/gm, "").slice(0, 80);
 
           currentClient = {
             ws,
-            senderId: senderId || `user-${Date.now()}`,
+            senderId: cleanSenderId,
             roomId: roomKey,
-            role: data.role || "client",
-            userInfo: data.userInfo || {},
+            role: cleanRole,
+            userInfo: {
+              ...data.userInfo,
+              name: cleanName
+            },
             mediaStatus: data.mediaStatus || { isMuted: false, isCameraOff: false, isHandRaised: false },
-            joinedAt: Date.now()
+            joinedAt: now
           };
           room.add(currentClient);
+          roomEntry.lastActiveAt = now;
 
           console.log(`[WS] Peer joined room ${roomKey}. Total in room: ${room.size} (Role: ${currentClient.role})`);
 
@@ -88,7 +150,9 @@ wss.on("connection", (ws, req) => {
               roomId: roomKey,
               senderId: currentClient.senderId,
               peers: existingPeers,
-              totalInRoom: room.size
+              totalInRoom: room.size,
+              createdAt: roomEntry.createdAt,
+              expiresAt: roomEntry.createdAt + SEVEN_DAYS_MS
             })
           );
 
@@ -158,13 +222,17 @@ wss.on("connection", (ws, req) => {
 
         case "CHAT_MESSAGE": {
           if (!currentClient?.roomId) return;
+          // Sanitize message content and cap length to prevent buffer bloat
+          const rawMsg = data.message;
+          const cleanMsg = typeof rawMsg === "string" ? rawMsg.slice(0, 2000) : "";
           broadcastToRoom(
             currentClient.roomId,
             {
               type: "CHAT_MESSAGE",
               senderId: currentClient.senderId,
               senderName: data.senderName || currentClient.userInfo?.name || "Participant",
-              message: data.message,
+              message: cleanMsg,
+              isEncrypted: !!data.isEncrypted,
               timestamp: Date.now()
             },
             ws
@@ -174,16 +242,18 @@ wss.on("connection", (ws, req) => {
 
         case "TRANSLATED_MESSAGE": {
           if (!currentClient?.roomId) return;
+          const cleanText = typeof data.text === "string" ? data.text.slice(0, 2000) : "";
           broadcastToRoom(
             currentClient.roomId,
             {
               type: "TRANSLATED_MESSAGE",
               senderId: currentClient.senderId,
-              text: data.text,
+              text: cleanText,
               symbol: data.symbol || "",
               signLanguage: data.signLanguage || "ASL",
               confidence: data.confidence || 1,
               isAi: !!data.isAi,
+              isEncrypted: !!data.isEncrypted,
               senderName: data.senderName || currentClient.userInfo?.name || "Participant",
               senderRole: currentClient.role,
               timestamp: Date.now()
@@ -222,8 +292,9 @@ wss.on("connection", (ws, req) => {
 
   const cleanup = () => {
     if (currentClient && currentClient.roomId) {
-      const room = callRooms.get(currentClient.roomId);
-      if (room) {
+      const roomEntry = callRooms.get(currentClient.roomId);
+      if (roomEntry) {
+        const room = roomEntry.clients;
         room.delete(currentClient);
         console.log(`[WS] Peer left room ${currentClient.roomId}. Remaining: ${room.size}`);
         broadcastToRoom(currentClient.roomId, {
@@ -243,8 +314,11 @@ wss.on("connection", (ws, req) => {
   ws.on("error", cleanup);
 });
 
-// Periodic heartbeat to prevent stale sockets
+// Periodic heartbeat and 7-day stale room garbage collector
 const heartbeatInterval = setInterval(() => {
+  const now = Date.now();
+
+  // Socket health
   for (const client of wss.clients) {
     if (client.isAlive === false) {
       client.terminate();
@@ -252,6 +326,14 @@ const heartbeatInterval = setInterval(() => {
     }
     client.isAlive = false;
     client.ping();
+  }
+
+  // Purge rooms inactive or created more than 7 days ago
+  for (const [roomId, roomEntry] of callRooms.entries()) {
+    if (now - roomEntry.createdAt > SEVEN_DAYS_MS || (roomEntry.clients.size === 0 && now - roomEntry.lastActiveAt > 3600000)) {
+      console.log(`[GC] Purged expired room ${roomId} (Age: ${Math.round((now - roomEntry.createdAt) / 3600000)}h)`);
+      callRooms.delete(roomId);
+    }
   }
 }, 30000);
 
@@ -262,10 +344,15 @@ wss.on("close", () => {
 // Room status endpoint for frontend/diagnostics
 app.get("/api/ws/rooms", (_req, res) => {
   const roomsData = [];
-  for (const [roomId, clients] of callRooms.entries()) {
+  const now = Date.now();
+  for (const [roomId, roomEntry] of callRooms.entries()) {
+    const clients = roomEntry.clients;
     roomsData.push({
       roomId,
       participantCount: clients.size,
+      createdAt: roomEntry.createdAt,
+      expiresAt: roomEntry.createdAt + SEVEN_DAYS_MS,
+      isExpired: now - roomEntry.createdAt > SEVEN_DAYS_MS,
       participants: Array.from(clients).map((c) => ({
         senderId: c.senderId,
         role: c.role,
@@ -303,6 +390,67 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(express.static(path.join(process.cwd(), "public")));
+
+// ========================================================
+// Enterprise Security: In-Memory Sliding Window Rate Limiter
+// Prevents API denial-of-service, model quota abuse, and spam
+// ========================================================
+const rateLimitMap = new Map(); // key -> { count: number, resetAt: number }
+
+function createRateLimiter({ windowMs = 60000, maxRequests = 100, message = "Too many requests. Please try again later." }) {
+  return (req, res, next) => {
+    const rawIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "127.0.0.1";
+    const clientIp = String(rawIp).replace(/[^\w.:-]/g, "");
+    const routePrefix = req.baseUrl || req.path.split("/")[2] || "api";
+    const key = `${routePrefix}:${clientIp}`;
+    const now = Date.now();
+
+    let record = rateLimitMap.get(key);
+    if (!record || now > record.resetAt) {
+      record = { count: 1, resetAt: now + windowMs };
+      rateLimitMap.set(key, record);
+    } else {
+      record.count++;
+      if (record.count > maxRequests) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((record.resetAt - now) / 1000));
+        res.setHeader("Retry-After", retryAfterSeconds);
+        return res.status(429).json({
+          success: false,
+          error: message,
+          retryAfterSeconds
+        });
+      }
+    }
+    next();
+  };
+}
+
+// Garbage collect expired rate limit records periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of rateLimitMap.entries()) {
+    if (now > record.resetAt) {
+      rateLimitMap.delete(key);
+    }
+  }
+}, 60000);
+
+// Global API rate limiter (120 requests/minute per client IP)
+app.use("/api", createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 120,
+  message: "API rate limit reached (120 req/min). Please slow down."
+}));
+
+// Specialized AI translation endpoints rate limiter (35 requests/minute per client IP)
+const aiRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 35,
+  message: "AI translation request limit reached (35 req/min). Please wait a moment."
+});
+app.use("/api/translate-sign", aiRateLimiter);
+app.use("/api/gemini-translate-stream", aiRateLimiter);
+app.use("/api/session-summary", aiRateLimiter);
 let aiClient = null;
 function getAIClient() {
   if (!aiClient) {

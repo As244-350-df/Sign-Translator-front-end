@@ -195,35 +195,41 @@ export const LiveSessionRemoteVideoStage = ({
       {/* 1. Remote Participant Video Feed Display */}
       {isRemoteCameraOff ? (
         // Peer Turned Off Camera Placeholder
-        <div className="relative w-full h-full flex flex-col items-center justify-center bg-slate-950 text-center p-6">
-          <div className="relative mb-4">
+        <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center bg-slate-950 text-center p-4 sm:p-6">
+          <div className="relative mb-3 sm:mb-4">
             <img
               src={remoteParticipant.avatar}
               alt={remoteParticipant.name}
-              className="w-28 h-28 rounded-full object-cover ring-4 ring-slate-800 shadow-2xl opacity-60"
+              className="w-20 h-20 sm:w-28 sm:h-28 rounded-full object-cover ring-4 ring-slate-800 shadow-2xl opacity-60"
             />
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="p-3 rounded-full bg-slate-900/90 border border-slate-700 text-slate-400 shadow-lg">
-                <VideoOff className="w-8 h-8" />
+              <div className="p-2.5 sm:p-3 rounded-full bg-slate-900/90 border border-slate-700 text-slate-400 shadow-lg">
+                <VideoOff className="w-6 h-6 sm:w-8 sm:h-8" />
               </div>
             </div>
           </div>
-          <h3 className="text-lg font-bold text-white mb-1">{remoteParticipant.name}</h3>
+          <h3 className="text-base sm:text-lg font-bold text-white mb-1">{remoteParticipant.name}</h3>
           <p className="text-xs text-slate-400 max-w-sm">
             Camera is currently turned off by the participant. Audio stream remains active.
           </p>
         </div>
       ) : remoteStream ? (
-        // WebRTC Real-Time Stream
+        // WebRTC Real-Time Stream (Hardware-Accelerated 60 FPS)
         <video
-          ref={videoElementRef}
+          ref={(el) => {
+            videoElementRef.current = el;
+            if (el && remoteStream && el.srcObject !== remoteStream) {
+              el.srcObject = remoteStream;
+              el.play().catch(() => {});
+            }
+          }}
           autoPlay
           playsInline
-          className="w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover"
         />
       ) : remoteVideoFrame ? (
         // Real-Time WebSocket Video Frame Stream
-        <div className="relative w-full h-full flex items-center justify-center bg-black">
+        <div className="absolute inset-0 w-full h-full flex items-center justify-center bg-black">
           <img
             src={remoteVideoFrame}
             alt="Live Remote Video Stream"
@@ -237,34 +243,34 @@ export const LiveSessionRemoteVideoStage = ({
         </div>
       ) : (
         // Waiting for other participant to connect & allow camera
-        <div className="relative w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950 text-center">
-          <div className="relative mb-4">
-            <div className="w-24 h-24 rounded-full ring-4 ring-slate-800 overflow-hidden shadow-2xl relative mx-auto">
+        <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center p-4 sm:p-6 bg-slate-950 text-center">
+          <div className="relative mb-3 sm:mb-4">
+            <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full ring-4 ring-slate-800 overflow-hidden shadow-2xl relative mx-auto">
               <img
                 src={remoteParticipant.avatar}
                 alt={remoteParticipant.name}
                 className="w-full h-full object-cover filter grayscale opacity-60"
               />
             </div>
-            <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-slate-900 border-2 border-slate-700 flex items-center justify-center text-amber-400">
-              <Radio className="w-3.5 h-3.5 animate-pulse" />
+            <div className="absolute -bottom-1 -right-1 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-900 border-2 border-slate-700 flex items-center justify-center text-amber-400">
+              <Radio className="w-3 h-3 sm:w-3.5 sm:h-3.5 animate-pulse" />
             </div>
           </div>
 
-          <h3 className="text-base font-bold text-white mb-1.5 flex items-center justify-center space-x-2">
+          <h3 className="text-sm sm:text-base font-bold text-white mb-1.5 flex items-center justify-center space-x-2">
             <span>{remoteParticipant.name}</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">
               {perspective === "client" ? "Interpreter Feed" : "Client Feed"}
             </span>
           </h3>
 
-          <p className="text-xs text-slate-400 max-w-sm mb-4">
+          <p className="text-[11px] sm:text-xs text-slate-400 max-w-sm mb-3">
             {peerStatus === "connected"
               ? "Participant connected. Waiting for camera stream permission..."
               : "Waiting for other participant to join. Their live camera feed will appear here as soon as they allow camera access."}
           </p>
 
-          <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300">
+          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-[10px] sm:text-[11px] text-slate-300">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Socket Room Live • Direct Feed Ready</span>
           </div>
@@ -285,57 +291,57 @@ export const LiveSessionRemoteVideoStage = ({
 
       {/* 3. Hand Raised Alert Banner */}
       {isRemoteHandRaised && (
-        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-40 flex items-center space-x-2 px-4 py-2 rounded-2xl bg-amber-500 text-slate-950 font-bold text-xs shadow-2xl animate-bounce">
+        <div className="absolute top-12 sm:top-14 left-1/2 transform -translate-x-1/2 z-40 flex items-center space-x-2 px-3.5 py-1.5 rounded-2xl bg-amber-500 text-slate-950 font-bold text-xs shadow-2xl animate-bounce">
           <Hand className="w-4 h-4" />
           <span>{remoteParticipant.name} raised their hand!</span>
         </div>
       )}
 
       {/* 4. Remote Participant Header Badge (Top-Left on Video) */}
-      <div className="absolute top-20 left-6 z-20 flex items-center space-x-3 bg-slate-950/80 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-slate-700/70 shadow-2xl animate-in fade-in duration-300">
-        <div className="relative">
+      <div className="absolute top-2.5 sm:top-3.5 left-2.5 sm:left-4 z-20 flex items-center space-x-2 sm:space-x-3 bg-slate-950/85 backdrop-blur-md px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl sm:rounded-2xl border border-slate-700/70 shadow-xl max-w-[calc(100%-8rem)] sm:max-w-none animate-in fade-in duration-300">
+        <div className="relative shrink-0">
           <img
             src={remoteParticipant.avatar}
             alt={remoteParticipant.name}
-            className="w-11 h-11 rounded-xl object-cover ring-2 ring-emerald-500 shadow-md"
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl object-cover ring-2 ring-emerald-500 shadow-md"
           />
-          <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 ring-2 ring-slate-950 animate-pulse" />
+          <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500 ring-2 ring-slate-950 animate-pulse" />
         </div>
 
-        <div>
-          <div className="flex items-center space-x-2">
-            <h3 className="font-bold text-sm text-white tracking-wide">
+        <div className="min-w-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 truncate">
+            <h3 className="font-bold text-xs sm:text-sm text-white tracking-wide truncate">
               {remoteParticipant.name}
             </h3>
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+            <span className="px-1.5 py-0.2 rounded-md text-[9px] sm:text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
               {remoteParticipant.badge}
             </span>
           </div>
 
-          <div className="flex items-center space-x-2 text-[11px] text-slate-300 mt-0.5">
-            <span>{remoteParticipant.roleLabel}</span>
+          <div className="flex items-center space-x-1.5 text-[10px] sm:text-[11px] text-slate-300 mt-0.2 truncate">
+            <span className="truncate">{remoteParticipant.roleLabel}</span>
             <span>•</span>
-            <span className="text-emerald-400 font-mono font-semibold flex items-center space-x-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-1" />
+            <span className="text-emerald-400 font-mono font-semibold flex items-center space-x-1 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-0.5" />
               {remoteStream
-                ? "1080p 60FPS HD"
+                ? "1080p 60FPS"
                 : remoteVideoFrame
-                ? "Live WebSocket Feed"
-                : "Simulation Feed"}
+                ? "WebSocket Feed"
+                : "Live Ready"}
             </span>
           </div>
         </div>
       </div>
 
       {/* 5. Remote Participant Status & Connection Pill (Top-Right on Video) */}
-      <div className="absolute top-20 right-6 z-20 flex items-center space-x-2">
+      <div className="absolute top-2.5 sm:top-3.5 right-2.5 sm:right-4 z-20 flex items-center space-x-1.5 sm:space-x-2">
         {/* Dynamic Speaking Audio VU Waveform */}
         <div
-          className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-slate-950/80 backdrop-blur-md border border-slate-700/80 shadow-lg"
+          className="flex items-center space-x-1 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-700/80 shadow-lg"
           title="Remote Participant Audio Activity"
         >
           {!isRemoteMuted ? (
-            <div className="flex items-end space-x-0.5 h-4 w-12 px-1">
+            <div className="flex items-end space-x-0.5 h-3.5 sm:h-4 w-8 sm:w-12 px-0.5">
               {audioBars.map((height, idx) => (
                 <span
                   key={idx}
@@ -345,15 +351,15 @@ export const LiveSessionRemoteVideoStage = ({
               ))}
             </div>
           ) : (
-            <MicOff className="w-4 h-4 text-rose-400" />
+            <MicOff className="w-3.5 h-3.5 text-rose-400" />
           )}
-          <span className="text-[10px] font-mono font-bold text-slate-300 ml-1">
+          <span className="text-[9px] sm:text-[10px] font-mono font-bold text-slate-300 ml-0.5 sm:ml-1">
             {!isRemoteMuted ? "ACTIVE" : "MUTED"}
           </span>
         </div>
 
         {/* WebRTC / WebSocket Connection Badge */}
-        <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 backdrop-blur-md border border-slate-700/80 text-xs font-mono text-indigo-300 shadow-lg">
+        <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-700/80 text-xs font-mono text-indigo-300 shadow-lg">
           <Wifi className="w-3.5 h-3.5 text-emerald-400" />
           <span>
             {remoteStream
@@ -367,15 +373,15 @@ export const LiveSessionRemoteVideoStage = ({
 
       {/* 6. Interactive Prompt Sent Notification */}
       {lastActionPrompt && (
-        <div className="absolute top-36 left-1/2 transform -translate-x-1/2 z-30 flex items-center space-x-2 px-4 py-2 rounded-xl bg-indigo-950/90 backdrop-blur-md border border-indigo-500 text-indigo-200 text-xs font-bold shadow-2xl animate-in slide-in-from-top-2 duration-200">
-          <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
+        <div className="absolute top-14 sm:top-16 left-1/2 transform -translate-x-1/2 z-30 flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-indigo-950/90 backdrop-blur-md border border-indigo-500 text-indigo-200 text-xs font-bold shadow-2xl animate-in slide-in-from-top-2 duration-200">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
           <span>Prompt Sent: &quot;{lastActionPrompt}&quot;</span>
         </div>
       )}
 
-      {/* 7. Context-Aware Quick Interaction Bar (Floats right above captions) */}
-      <div className="absolute bottom-52 left-1/2 transform -translate-x-1/2 z-20 flex items-center space-x-2 bg-slate-950/85 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-slate-800 shadow-xl max-w-[95%] overflow-x-auto">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 shrink-0">
+      {/* 7. Context-Aware Quick Interaction Bar (Neatly placed near top below badges, avoiding bottom caption overlap) */}
+      <div className="absolute top-14 sm:top-16 left-1/2 transform -translate-x-1/2 z-20 flex items-center space-x-1.5 sm:space-x-2 bg-slate-950/90 backdrop-blur-md px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl sm:rounded-2xl border border-slate-800 shadow-xl max-w-[94vw] overflow-x-auto no-scrollbar">
+        <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1 shrink-0">
           {perspective === "client" ? "Ask Interpreter:" : "Prompt Client:"}
         </span>
 
@@ -383,21 +389,21 @@ export const LiveSessionRemoteVideoStage = ({
           <>
             <button
               onClick={() => handleSendPrompt("Please slow down signing speed")}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg sm:rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-[11px] sm:text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
             >
               <RotateCcw className="w-3 h-3 text-indigo-400" />
               <span>Slow Down (0.75x)</span>
             </button>
             <button
               onClick={() => handleSendPrompt("Please fingerspell medical terms")}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg sm:rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-[11px] sm:text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
             >
               <Type className="w-3 h-3 text-emerald-400" />
               <span>Fingerspell Term</span>
             </button>
             <button
               onClick={() => handleSendPrompt("Please repeat the last sentence")}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg sm:rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-[11px] sm:text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
             >
               <FastForward className="w-3 h-3 text-amber-400" />
               <span>Repeat Last</span>
@@ -407,14 +413,14 @@ export const LiveSessionRemoteVideoStage = ({
           <>
             <button
               onClick={() => handleSendPrompt("Please keep hands centered in camera frame")}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg sm:rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-[11px] sm:text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
             >
               <Camera className="w-3 h-3 text-indigo-400" />
               <span>Center Hands</span>
             </button>
             <button
               onClick={() => handleSendPrompt("Ready for your sign input")}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg sm:rounded-xl bg-slate-900 hover:bg-indigo-900/60 border border-slate-700 text-slate-200 hover:text-white text-[11px] sm:text-xs font-medium transition-colors flex items-center space-x-1 cursor-pointer shrink-0"
             >
               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
               <span>Ready for Sign</span>

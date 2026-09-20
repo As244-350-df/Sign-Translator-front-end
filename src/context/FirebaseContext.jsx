@@ -4,6 +4,7 @@ import {
 } from '../lib/firebase';
 import { authService } from '../services/authService';
 import { firestoreService } from '../services/firestoreService';
+import { SessionManager } from '../utils/security';
 import { INITIAL_USER, INITIAL_SETTINGS, MOCK_SESSION_HISTORY, MOCK_BOOKINGS, MOCK_NOTIFICATIONS } from '../data/mockData';
 
 const FirebaseContext = createContext(null);
@@ -60,10 +61,27 @@ export const FirebaseProvider = ({ children }) => {
   // Listen to Auth State
   useEffect(() => {
     const unsubscribe = authService.onAuthStateChange(async (currentUser) => {
-      setFirebaseUser(currentUser);
-      setIsLoadingAuth(false);
-
       if (currentUser) {
+        // Enforce 7-Day Session Expiration Policy
+        if (SessionManager.isSessionExpired(currentUser.uid)) {
+          console.warn('[Security] User session expired (> 7 days). Logging out.');
+          try {
+            await authService.signOutUser();
+          } catch {}
+          SessionManager.clearSession(currentUser.uid);
+          authService.clearStoredGuestSession();
+          setFirebaseUser(null);
+          setUser(INITIAL_USER);
+          setAuthError('Your session expired after 7 days for security. Please sign in again.');
+          setIsLoadingAuth(false);
+          return;
+        }
+
+        // Initialize / refresh 7-day session record
+        SessionManager.initSession(currentUser.uid, currentUser.email);
+        setFirebaseUser(currentUser);
+        setIsLoadingAuth(false);
+
         // Authenticated user: Load profile from Firestore
         try {
           const profile = await firestoreService.getUserProfile(currentUser.uid);
@@ -96,11 +114,21 @@ export const FirebaseProvider = ({ children }) => {
           console.warn('User profile sync notice:', err?.message || err);
         }
       } else {
+        setFirebaseUser(null);
+        setIsLoadingAuth(false);
         // Check for stored guest session
         const storedGuest = authService.getStoredGuestSession();
         if (storedGuest?.user && storedGuest?.profile) {
-          setFirebaseUser(storedGuest.user);
-          setUser(storedGuest.profile);
+          // Check guest session 7-day expiry as well
+          if (SessionManager.isSessionExpired(storedGuest.user.uid)) {
+            authService.clearStoredGuestSession();
+            SessionManager.clearSession(storedGuest.user.uid);
+            setUser(INITIAL_USER);
+          } else {
+            SessionManager.initSession(storedGuest.user.uid, 'guest@signlink.app');
+            setFirebaseUser(storedGuest.user);
+            setUser(storedGuest.profile);
+          }
         } else {
           // Fallback to default user
           setUser(INITIAL_USER);
@@ -214,6 +242,9 @@ export const FirebaseProvider = ({ children }) => {
     } catch (err) {
       console.warn('Logout notice:', err?.message || err);
     } finally {
+      if (firebaseUser?.uid) {
+        SessionManager.clearSession(firebaseUser.uid);
+      }
       authService.clearStoredGuestSession();
       setFirebaseUser(null);
       setUser(INITIAL_USER);

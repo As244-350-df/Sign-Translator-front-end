@@ -28,6 +28,8 @@ const Header = ({
   onOpenArchitecture,
   onOpenJoinRoom,
   onStartLiveCall,
+  onEndCall,
+  onToggleLiveMode,
   isCallActive = false
 }) => {
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -138,25 +140,48 @@ const Header = ({
     /* Right Action Icons & Profile */
   }
           <div className="flex items-center space-x-2 sm:space-x-3">
-            {/* Direct Live Session Entry */}
-            <button
-              onClick={() => {
-                if (onStartLiveCall) {
-                  onStartLiveCall();
-                } else if (onOpenJoinRoom) {
-                  onOpenJoinRoom();
-                }
-              }}
-              title={isCallActive ? "Live Session Active" : "Start Live Session (Direct Video & Socket Translation)"}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all active:scale-95 cursor-pointer ${
-                isCallActive
-                  ? "bg-emerald-600 text-white ring-2 ring-emerald-400"
-                  : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
-              }`}
-            >
-              <Video className="w-3.5 h-3.5" />
-              <span>Live Session</span>
-            </button>
+            {/* Live Session Mode Switch (ON / OFF) */}
+            <div className={`flex items-center space-x-1.5 p-0.5 rounded-xl border transition-all ${
+              isCallActive
+                ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+                : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400"
+            }`}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCallActive) {
+                    if (onEndCall) onEndCall();
+                    else if (onToggleLiveMode) onToggleLiveMode(false);
+                  } else {
+                    if (onOpenJoinRoom) onOpenJoinRoom();
+                    else if (onStartLiveCall) onStartLiveCall();
+                  }
+                }}
+                className={`flex items-center space-x-2 px-2.5 py-1.5 text-xs font-bold rounded-lg transition-all active:scale-95 cursor-pointer ${
+                  isCallActive
+                    ? "bg-emerald-600 hover:bg-rose-600 text-white shadow-xs"
+                    : "hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
+                }`}
+                title={isCallActive ? "Live Session Mode is ON — Click to Switch OFF" : "Live Session Mode is OFF — Click to Switch ON and enter room code"}
+              >
+                <div className="relative flex items-center justify-center">
+                  <Video className="w-3.5 h-3.5" />
+                  {isCallActive && (
+                    <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
+                    </span>
+                  )}
+                </div>
+                <span>Live Mode: {isCallActive ? "ON" : "OFF"}</span>
+                {/* Visual toggle switch */}
+                <span className={`w-6 h-3.5 flex items-center rounded-full p-0.5 transition-colors ${
+                  isCallActive ? "bg-emerald-400 justify-end" : "bg-slate-300 dark:bg-slate-600 justify-start"
+                }`}>
+                  <span className="w-2.5 h-2.5 rounded-full bg-white shadow-xs" />
+                </span>
+              </button>
+            </div>
 
             {
     /* Architecture Telemetry Button */

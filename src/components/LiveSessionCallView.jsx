@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Mic, MicOff, Camera, CameraOff, PhoneOff, Radio, Copy, ExternalLink, Columns, Maximize2 } from "lucide-react";
+import { Mic, MicOff, Camera, CameraOff, PhoneOff, Radio, Copy, ExternalLink, Columns, Maximize2, Zap, AlertTriangle, Sparkles, MessageSquare } from "lucide-react";
 import { MOCK_INTERPRETERS } from "../data/mockData";
 import { useFirebase } from "../context/FirebaseContext";
 import { firestoreService } from "../services/firestoreService";
@@ -20,7 +20,8 @@ import { LiveSessionStageOverlay } from "./live-session/LiveSessionStageOverlay"
 import { LiveSessionRemoteVideoStage } from "./live-session/LiveSessionRemoteVideoStage";
 import { LiveSessionFloatingVideoControls } from "./live-session/LiveSessionFloatingVideoControls";
 import { DisconnectModal } from "./live-session/DisconnectModal";
-import { CallSignalingEngine } from "../utils/callSignaling";
+import { CallSignalingEngine, ADAPTIVE_TIERS } from "../utils/callSignaling";
+import { SecurityValidator } from "../utils/security";
 import { useLiveSessionCallMedia } from "../hooks/useLiveSessionCallMedia";
 
 const LiveSessionCallView = ({
@@ -159,6 +160,12 @@ const LiveSessionCallView = ({
   const [peerStatus, setPeerStatus] = useState("idle");
   const signalingEngineRef = useRef(null);
 
+  // Performance telemetry and adaptive resolution states
+  const [telemetryMetrics, setTelemetryMetrics] = useState(null);
+  const [telemetryHistory, setTelemetryHistory] = useState([]);
+  const [qualityMode, setQualityMode] = useState("auto");
+  const [currentQualityTier, setCurrentQualityTier] = useState("720p");
+
   // Gemini AI landmark translation in live call
   const [geminiTranslation, setGeminiTranslation] = useState(null);
   const [isGeminiLoading, setIsGeminiLoading] = useState(false);
@@ -184,7 +191,7 @@ const LiveSessionCallView = ({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  const { localVideoRef, mainVideoRef, localStreamRef, localStream } = useLiveSessionCallMedia({
+  const { localVideoRef, mainVideoRef, localStreamRef, localStream, applyStreamConstraints } = useLiveSessionCallMedia({
     useRealCameraLocal,
     isCameraOff,
     isMuted,
@@ -193,10 +200,54 @@ const LiveSessionCallView = ({
     setUseRealCameraLocal
   });
 
+  const handleSetQualityMode = useCallback((mode) => {
+    setQualityMode(mode);
+    signalingEngineRef.current?.setQualityMode(mode);
+  }, []);
+
+  const handleApplyTier = useCallback((tierKey) => {
+    setCurrentQualityTier(tierKey);
+    signalingEngineRef.current?.setQualityMode("manual", tierKey);
+    const config = ADAPTIVE_TIERS[tierKey];
+    if (config) {
+      applyStreamConstraints(config);
+      showMediaNotice(`Set video resolution to ${config.label}`, <Zap className="w-4 h-4 text-indigo-400" />);
+    }
+  }, [applyStreamConstraints]);
+
   // Cross-tab and WebSocket + WebRTC signaling lifecycle for 2-way call
   useEffect(() => {
     const engine = new CallSignalingEngine(`signlink-call-${interpreterId}`);
     signalingEngineRef.current = engine;
+
+    engine.onStatsUpdate = (metrics, history) => {
+      setTelemetryMetrics(metrics);
+      setTelemetryHistory([...history]);
+      if (metrics.tier) setCurrentQualityTier(metrics.tier);
+    };
+
+    engine.onQualityTierChange = (tierKey, reason, config) => {
+      setCurrentQualityTier(tierKey);
+      if (config) {
+        applyStreamConstraints(config);
+      }
+      showMediaNotice(`Adapted video to ${config?.label || tierKey}`, <Zap className="w-4 h-4 text-indigo-400" />);
+    };
+
+    engine.onSecurityAlert = (alert) => {
+      showMediaNotice(alert?.message || "Signaling rate limit alert", <AlertTriangle className="w-4 h-4 text-amber-400" />);
+    };
+
+    engine.onE2EEStatusChange = (status) => {
+      setTelemetryMetrics((prev) => prev ? {
+        ...prev,
+        safetyNumber: status.safetyNumber,
+        e2eeActive: status.active
+      } : {
+        safetyNumber: status.safetyNumber,
+        e2eeActive: status.active
+      });
+    };
 
     engine.setStreams(
       localStreamRef.current,
@@ -305,13 +356,15 @@ const LiveSessionCallView = ({
     }
   }, [localStream]);
 
-  // Real-Time WebSocket Video Frame Stream Broadcaster
+  // Real-Time WebSocket Video Frame Stream Broadcaster (Only fallback when WebRTC is not yet connected)
   useEffect(() => {
-    if (!useRealCameraLocal || isCameraOff) return;
+    // When WebRTC is connected or active, WebRTC delivers native 60 FPS hardware video.
+    // Completely disable canvas frame capturing to eliminate CPU stutter & bandwidth saturation.
+    if (!useRealCameraLocal || isCameraOff || remoteStream || peerStatus === "connected") return;
 
     const frameCanvas = document.createElement("canvas");
-    frameCanvas.width = 400;
-    frameCanvas.height = 300;
+    frameCanvas.width = 320;
+    frameCanvas.height = 240;
     const ctx = frameCanvas.getContext("2d", { willReadFrequently: true });
 
     const frameInterval = setInterval(() => {
@@ -326,15 +379,15 @@ const LiveSessionCallView = ({
         ctx.drawImage(videoEl, 0, 0, frameCanvas.width, frameCanvas.height);
         ctx.restore();
 
-        const frameData = frameCanvas.toDataURL("image/jpeg", 0.55);
+        const frameData = frameCanvas.toDataURL("image/jpeg", 0.4);
         engine.sendVideoFrame(frameData);
       } catch (err) {
         // Frame skipped if context busy
       }
-    }, 110);
+    }, 280);
 
     return () => clearInterval(frameInterval);
-  }, [useRealCameraLocal, isCameraOff, localVideoRef]);
+  }, [useRealCameraLocal, isCameraOff, localVideoRef, remoteStream, peerStatus]);
 
   // Sync Media Status over WebSocket (Mute, Camera, Hand Raised)
   useEffect(() => {
@@ -643,27 +696,40 @@ const LiveSessionCallView = ({
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
     if (!chatInput.trim()) return;
-    const msgText = chatInput.trim();
+
+    if (!SecurityValidator.checkActionRateLimit("chat_message", 5, 2000)) {
+      showMediaNotice("Please wait a moment before sending another message", <AlertTriangle className="w-4 h-4 text-amber-400" />);
+      return;
+    }
+
+    const cleanText = SecurityValidator.sanitizeText(chatInput.trim(), 500);
+    if (!cleanText) return;
+
     const newMsg = {
       sender: "You",
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      text: msgText,
+      text: cleanText,
       isSelf: true
     };
     setChatMessages((prev) => [...prev, newMsg]);
-    signalingEngineRef.current?.sendChatMessage(msgText);
+    signalingEngineRef.current?.sendChatMessage(cleanText);
     setChatInput("");
   };
 
   const handleQuickChat = (phrase) => {
+    if (!SecurityValidator.checkActionRateLimit("chat_message", 5, 2000)) {
+      showMediaNotice("Please slow down message sending", <AlertTriangle className="w-4 h-4 text-amber-400" />);
+      return;
+    }
+    const cleanText = SecurityValidator.sanitizeText(phrase, 500);
     const newMsg = {
       sender: "You",
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      text: phrase,
+      text: cleanText,
       isSelf: true
     };
     setChatMessages((prev) => [...prev, newMsg]);
-    signalingEngineRef.current?.sendChatMessage(phrase);
+    signalingEngineRef.current?.sendChatMessage(cleanText);
   };
 
   const handleTestSign = (signKey) => {
@@ -743,7 +809,7 @@ const LiveSessionCallView = ({
       : dictionaryList.filter((s) => s.category === selectedCategory);
 
   return (
-    <div className="relative min-h-[calc(100vh-8rem)] flex flex-col bg-slate-950 text-white rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
+    <div className="relative flex-1 w-full h-full min-h-[480px] flex flex-col bg-slate-950 text-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
       <LiveSessionHeader
         interpreter={interpreter}
         clientUser={user}
@@ -770,19 +836,19 @@ const LiveSessionCallView = ({
       />
 
       {/* Video Presentation Stage: Supports PiP and 50/50 Dual Participant Split Grid */}
-      <div className="relative flex-1 flex items-center justify-center bg-slate-900 overflow-hidden min-h-[480px]">
+      <div className="relative flex-1 w-full min-h-0 bg-slate-900 overflow-hidden flex items-center justify-center">
         {layoutMode === "split" ? (
           // 50/50 Dual Participant Split Grid: Users see each other AND see themselves side-by-side
-          <div className="relative w-full h-full grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-950">
+          <div className="absolute inset-0 w-full h-full grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 p-2 sm:p-3 bg-slate-950 min-h-0">
             {/* Left/Top: Your Feed (Local Camera) */}
-            <div className="relative w-full h-full min-h-[260px] bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
+            <div className="relative w-full h-full min-h-0 bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
               {isCameraOff ? (
                 <div className="flex flex-col items-center justify-center text-center p-4">
-                  <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-2">
-                    <CameraOff className="w-8 h-8 text-slate-400" />
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-800 flex items-center justify-center mb-2">
+                    <CameraOff className="w-6 h-6 sm:w-8 sm:h-8 text-slate-400" />
                   </div>
-                  <span className="text-sm font-bold text-white">Your Camera is Off</span>
-                  <span className="text-xs text-slate-400">Click camera button below to resume</span>
+                  <span className="text-xs sm:text-sm font-bold text-white">Your Camera is Off</span>
+                  <span className="text-[10px] sm:text-xs text-slate-400">Click camera button below to resume</span>
                 </div>
               ) : (
                 <video
@@ -790,12 +856,12 @@ const LiveSessionCallView = ({
                   autoPlay
                   muted
                   playsInline
-                  className="w-full h-full object-cover transform -scale-x-100"
+                  className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
                 />
               )}
 
               {/* Overlay Badge for Self */}
-              <div className="absolute top-3 left-3 flex items-center space-x-2 bg-slate-950/80 backdrop-blur-md px-3 py-1 rounded-xl border border-slate-700/60 text-xs font-bold text-white z-20">
+              <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 flex items-center space-x-1.5 bg-slate-950/80 backdrop-blur-md px-2.5 py-1 rounded-xl border border-slate-700/60 text-[11px] sm:text-xs font-bold text-white z-20">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>You ({perspective === "client" ? "Client" : "Interpreter"})</span>
                 {isMuted && <span className="text-rose-400 text-[10px] uppercase font-bold">• Muted</span>}
@@ -803,7 +869,7 @@ const LiveSessionCallView = ({
             </div>
 
             {/* Right/Bottom: Remote Participant Feed */}
-            <div className="relative w-full h-full min-h-[260px] bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-lg">
+            <div className="relative w-full h-full min-h-0 bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden border border-slate-800 shadow-lg">
               <LiveSessionRemoteVideoStage
                 perspective={perspective}
                 interpreter={interpreter}
@@ -833,14 +899,14 @@ const LiveSessionCallView = ({
           </div>
         ) : (
           // Picture-in-Picture Mode: Big Stage for Peer + Floating PiP for Self
-          <div className="relative w-full h-full flex items-center justify-center">
+          <div className="absolute inset-0 w-full h-full flex items-center justify-center overflow-hidden">
             {mainViewMode === "camera" && useRealCameraLocal ? (
               <video
                 ref={mainVideoRef}
                 autoPlay
                 muted
                 playsInline
-                className="w-full h-full object-cover transform -scale-x-100"
+                className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
               />
             ) : (
               <LiveSessionRemoteVideoStage
@@ -910,19 +976,9 @@ const LiveSessionCallView = ({
           </div>
         )}
 
-        {/* Floating On-Screen Video Controls HUD (Mute, Camera Toggle, Disconnect) */}
-        <LiveSessionFloatingVideoControls
-          isMuted={isMuted}
-          onToggleMute={handleToggleMute}
-          isCameraOff={isCameraOff}
-          onToggleCamera={handleToggleCamera}
-          onDisconnect={() => setShowDisconnectModal(true)}
-          perspective={perspective}
-        />
-
         {/* Toast Notification for Media Actions (Mute/Unmute, Camera On/Off) */}
         {mediaFeedbackNotice && (
-          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-40 px-4 py-2 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-slate-700 text-white text-xs font-bold shadow-2xl flex items-center space-x-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="absolute top-14 sm:top-16 left-1/2 transform -translate-x-1/2 z-40 px-3 sm:px-4 py-1.5 sm:py-2 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-slate-700 text-white text-xs font-bold shadow-2xl flex items-center space-x-2 animate-in fade-in slide-in-from-top-2 duration-200">
             {mediaFeedbackNotice.icon}
             <span>{mediaFeedbackNotice.text}</span>
           </div>
@@ -1015,16 +1071,15 @@ const LiveSessionCallView = ({
       {/* Real-Time SFU & AI Telemetry Inspector */}
       {showDiagnostics && (
         <LiveSessionTelemetryOverlay
-          peerStatus={peerStatus}
-          localStream={localStreamRef.current}
-          remoteStream={remoteStream}
-          recognizedSignLogs={recognizedSignLogs}
-          currentCaption={currentCaption}
-          cameraZoom={cameraZoom}
-          cameraPan={cameraPan}
-          isAutoCentering={isAutoCentering}
-          fps={60}
+          showDiagnostics={showDiagnostics}
+          metrics={telemetryMetrics}
+          metricsHistory={telemetryHistory}
+          qualityMode={qualityMode}
+          onSetQualityMode={handleSetQualityMode}
+          onApplyTier={handleApplyTier}
           onClose={() => setShowDiagnostics(false)}
+          peerStatus={peerStatus}
+          roomId={interpreterId || "room-4927"}
         />
       )}
 
