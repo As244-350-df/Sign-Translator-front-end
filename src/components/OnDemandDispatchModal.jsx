@@ -7,10 +7,14 @@ import {
   Clock,
   Video,
   AlertCircle,
-  RotateCw
+  RotateCw,
+  Copy,
+  CheckCircle2
 } from "lucide-react";
 import { SIGN_LANGUAGES, MOCK_INTERPRETERS } from "../data/mockData";
 import { api } from "../utils/api";
+import { firestoreService } from "../services/firestoreService";
+
 const OnDemandDispatchModal = ({
   isOpen,
   onClose,
@@ -22,6 +26,9 @@ const OnDemandDispatchModal = ({
   const [matchingState, setMatchingState] = useState("idle");
   const [countdown, setCountdown] = useState(30);
   const [matchedInterpreter, setMatchedInterpreter] = useState(null);
+  const [dispatchedRoomCode, setDispatchedRoomCode] = useState("room-4927");
+  const [copiedCode, setCopiedCode] = useState(false);
+
   const specialties = [
     "Medical & Healthcare",
     "Legal & Courtroom",
@@ -30,26 +37,60 @@ const OnDemandDispatchModal = ({
     "Emergency First Response",
     "Deaf Culture Mediation"
   ];
+
   const startMatching = async () => {
     setMatchingState("searching");
     setCountdown(30);
     setMatchedInterpreter(null);
+    const roomCode = `room-${Math.floor(1000 + Math.random() * 9000)}`;
+    setDispatchedRoomCode(roomCode);
+
     try {
       const matchResult = await api.matchOnDemand(selectedLanguage, selectedSpecialty);
-      setTimeout(() => {
+      setTimeout(async () => {
+        let selected = null;
         if (matchResult && matchResult.matchedInterpreter) {
-          setMatchedInterpreter(matchResult.matchedInterpreter);
-          setMatchingState("found");
+          selected = matchResult.matchedInterpreter;
         } else {
-          const fallback = MOCK_INTERPRETERS.find((i) => i.availableStatus === "online") || MOCK_INTERPRETERS[0];
-          setMatchedInterpreter(fallback);
-          setMatchingState("found");
+          selected = MOCK_INTERPRETERS.find((i) => i.availableStatus === "online") || MOCK_INTERPRETERS[0];
+        }
+        setMatchedInterpreter(selected);
+        setMatchingState("found");
+
+        // Send call across the network to Firestore
+        try {
+          await firestoreService.initiateCall({
+            clientUserId: "client-on-demand",
+            clientName: "Urgent Triage Client",
+            interpreterId: selected.id,
+            interpreterName: selected.name,
+            language: selectedLanguage,
+            urgency: "urgent",
+            roomCode,
+            meetingRoomId: roomCode,
+            notes: `Urgent On-Demand Match (${selectedSpecialty})`
+          });
+        } catch (err) {
+          console.warn("Firestore on-demand notice:", err);
         }
       }, 1500);
     } catch {
       const fallback = MOCK_INTERPRETERS[0];
       setMatchedInterpreter(fallback);
       setMatchingState("found");
+      try {
+        await firestoreService.initiateCall({
+          clientUserId: "client-on-demand",
+          clientName: "Urgent Triage Client",
+          interpreterId: fallback.id,
+          interpreterName: fallback.name,
+          language: selectedLanguage,
+          urgency: "urgent",
+          roomCode,
+          meetingRoomId: roomCode,
+          notes: `Urgent On-Demand Match (${selectedSpecialty})`
+        });
+      } catch {}
     }
   };
   useEffect(() => {
@@ -212,10 +253,30 @@ const OnDemandDispatchModal = ({
                   </span>
                   <span className="text-slate-400">•</span>
                   <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                    ${matchedInterpreter.ratePerMinute}/min
+                    Free Service
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Dispatched Room Code & Copy */}
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-500/30 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-emerald-800 dark:text-emerald-300 font-bold">Network Room Code:</span>
+                <span className="font-mono font-black text-sm text-slate-900 dark:text-white">{dispatchedRoomCode}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(dispatchedRoomCode);
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 2000);
+                }}
+                className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1 cursor-pointer transition-colors shadow-xs"
+              >
+                {copiedCode ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedCode ? "Copied!" : "Copy Code"}</span>
+              </button>
             </div>
 
             {
@@ -236,10 +297,10 @@ const OnDemandDispatchModal = ({
   }
             <button
     onClick={() => {
-      onConnectCall(matchedInterpreter.id);
+      onConnectCall(dispatchedRoomCode, matchedInterpreter);
       onClose();
     }}
-    className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-lg shadow-emerald-500/25 flex items-center justify-center space-x-2 transition-all active:scale-98"
+    className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-lg shadow-emerald-500/25 flex items-center justify-center space-x-2 transition-all active:scale-98 cursor-pointer"
   >
               <Video className="w-4 h-4" />
               <span>Enter 2-Way Video Session Now</span>

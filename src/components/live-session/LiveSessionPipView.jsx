@@ -38,7 +38,10 @@ export const LiveSessionPipView = forwardRef(({
       };
 
   return (
-    <div className="absolute bottom-20 sm:bottom-24 right-3 sm:right-6 w-32 sm:w-44 md:w-56 aspect-[4/3] sm:aspect-video rounded-xl sm:rounded-2xl bg-slate-950 border-2 border-slate-700/80 shadow-2xl overflow-hidden z-20 group shrink-0">
+    <div
+      className="absolute bottom-20 sm:bottom-24 right-3 sm:right-6 w-36 sm:w-48 md:w-60 aspect-video rounded-xl sm:rounded-2xl bg-slate-950 border-2 border-slate-700/80 shadow-2xl overflow-hidden z-20 group shrink-0"
+      style={{ aspectRatio: "16 / 9" }}
+    >
       {isRemoteInPip ? (
         // PiP shows Remote Participant when user has chosen to expand their own camera to main stage
         <div className="absolute inset-0 w-full h-full bg-slate-900">

@@ -153,8 +153,8 @@ const ScheduleView = ({
                         <span>{b.time || "10:00 AM"} ({b.durationMinutes || 45} min)</span>
                       </span>
                       <span>•</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                        ${costFormatted}
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-500/20 text-[11px]">
+                        Free Session
                       </span>
                     </div>
 

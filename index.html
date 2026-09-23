@@ -1,14 +1,142 @@
 <!doctype html>
 <html lang="en" class="scroll-smooth">
   <head>
+    <!-- Essential Technical SEO & Character Encoding -->
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SignLink - Sign Language Interpreter</title>
-    <meta name="description" content="Real-time AI and live human sign language interpreter, text-to-sign visual keyboard, appointment booking, dictionary resource hub, and video interpretation suite." />
-    <meta property="og:title" content="SignLink - Sign Language Interpreter" />
-    <meta property="og:description" content="Real-time AI and live human sign language interpreter, text-to-sign visual keyboard, appointment booking, dictionary resource hub, and video interpretation suite." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+    <!-- Google Search Engine Indexing & Bot Directives (Google Search Central Guidelines) -->
+    <title>SignLink – AI & Live Sign Language Interpreter | ASL Translation</title>
+    <meta name="description" content="Real-time AI and live certified human sign language interpreter. Access instant ASL translation, 2-way live video sessions, text-to-sign visual keyboard, and dictionary." />
+    <meta name="keywords" content="sign language interpreter, ASL interpreter, American Sign Language, real-time sign recognition, deaf accessibility, video relay service, live sign interpreter, text to sign, sign language dictionary" />
+    <meta name="author" content="SignLink" />
+    <meta name="application-name" content="SignLink" />
+    <meta name="apple-mobile-web-app-title" content="SignLink" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <link rel="canonical" href="https://signlink.app/" />
+
+    <!-- Mobile Experience & Theme Configuration -->
+    <meta name="theme-color" content="#4f46e5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#090d16" media="(prefers-color-scheme: dark)" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- OpenGraph Metadata (Facebook, LinkedIn, Discord, Slack, iMessage) -->
+    <meta property="og:site_name" content="SignLink" />
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://signlink.app/" />
+    <meta property="og:title" content="SignLink – AI & Live Sign Language Interpreter | ASL Translation" />
+    <meta property="og:description" content="Real-time AI and live certified human sign language interpreter. Access instant ASL translation, 2-way live video sessions, text-to-sign visual keyboard, and dictionary." />
+    <meta property="og:image" content="https://signlink.app/favicon.svg" />
+    <meta property="og:image:alt" content="SignLink Real-Time Sign Language Interpreter Platform" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+
+    <!-- Twitter / X Card Metadata -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@SignLinkApp" />
+    <meta name="twitter:creator" content="@SignLinkApp" />
+    <meta name="twitter:title" content="SignLink – AI & Live Sign Language Interpreter" />
+    <meta name="twitter:description" content="Real-time AI and live certified human sign language interpreter. Access instant ASL translation, 2-way live video sessions, and interactive dictionary." />
+    <meta name="twitter:image" content="https://signlink.app/favicon.svg" />
+    <meta name="twitter:image:alt" content="SignLink Real-Time Sign Language Interpreter Platform" />
+
+    <!-- Schema.org JSON-LD: WebApplication & SoftwareApplication Specification (Google Search Console Validated) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebApplication",
+          "@id": "https://signlink.app/#webapp",
+          "name": "SignLink",
+          "alternateName": "SignLink Sign Language Interpreter",
+          "url": "https://signlink.app/",
+          "description": "Real-time sign language interpreter application powered by computer vision AI and certified human interpreters, featuring real-time ASL translation, live 2-way video sessions, text-to-sign visual keyboard, and dictionary.",
+          "applicationCategory": "HealthApplication, MultimediaApplication, CommunicationApplication",
+          "operatingSystem": "Web, iOS, Android, macOS, Windows",
+          "browserRequirements": "Requires WebRTC and WebGL capable modern browser with Camera support",
+          "accessibilityFeature": [
+            "captions",
+            "alternativeText",
+            "highContrastDisplay",
+            "signLanguage",
+            "audioDescription"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD",
+            "category": "FreeTier"
+          },
+          "featureList": [
+            "Real-time 21-point kinematic ASL hand sign recognition",
+            "Instant 2-way WebRTC peer-to-peer video interpretation calls",
+            "Real-time speech-to-sign and text-to-sign translation engine",
+            "Certified human American Sign Language interpreter booking",
+            "Interactive ASL visual sign dictionary and flashcards library",
+            "End-to-end encrypted live media signaling and private captions"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://signlink.app/#website",
+          "url": "https://signlink.app/",
+          "name": "SignLink",
+          "description": "The AI & Human Sign Language Interpreter Platform",
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": {
+              "@type": "EntryPoint",
+              "urlTemplate": "https://signlink.app/?search={search_term_string}"
+            },
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://signlink.app/#organization",
+          "name": "SignLink",
+          "url": "https://signlink.app/",
+          "logo": "https://signlink.app/favicon.svg"
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://signlink.app/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "How does SignLink real-time sign language interpretation work?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "SignLink uses high-precision computer vision and deep learning models to track 21 hand landmarks in real time through your device camera, translating ASL signs into spoken captions and text with low latency."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I connect with certified human sign language interpreters on SignLink?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. SignLink provides an on-demand directory of certified RID and NIC sign language interpreters available for instant live video calls, medical appointments, and educational sessions."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is SignLink secure and private for sensitive healthcare or legal meetings?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "SignLink supports end-to-end encryption (E2EE) with security numbers, ephemeral session room IDs, and in-memory WebRTC signaling with zero retention of camera video streams."
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

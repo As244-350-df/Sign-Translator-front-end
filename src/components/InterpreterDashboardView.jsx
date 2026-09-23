@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
-  DollarSign,
+  HeartHandshake,
   Clock,
   Star,
   ShieldCheck,
@@ -8,6 +8,7 @@ import {
   PhoneIncoming,
   TrendingUp,
   CheckCircle2,
+  Copy,
   ToggleLeft,
   ToggleRight,
   ArrowUpRight,
@@ -16,7 +17,9 @@ import {
   User,
   PlusCircle,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Users,
+  Award
 } from "lucide-react";
 import { api } from "../utils/api";
 import { useFirebase } from "../context/FirebaseContext";
@@ -43,6 +46,7 @@ function playIncomingRingTone() {
 
 const IncomingCallAlertCard = ({ call, onAccept, onDecline }) => {
   const [countdown, setCountdown] = useState(30);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   useEffect(() => {
     playIncomingRingTone();
@@ -69,10 +73,18 @@ const IncomingCallAlertCard = ({ call, onAccept, onDecline }) => {
   const language = call?.language || "ASL";
   const urgency = call?.urgency || "urgent";
   const notes = call?.notes || "Urgent Video Remote Interpretation requested";
+  const roomCode = call?.roomCode || call?.meetingRoomId || call?.sessionId || "room-4927";
+
+  const handleCopyCode = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(roomCode);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
 
   return (
     <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-6 rounded-3xl text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in slide-in-from-top duration-300 ring-4 ring-emerald-400/40">
-      <div className="flex items-center space-x-4">
+      <div className="flex items-start md:items-center space-x-4">
         <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 animate-bounce">
           <PhoneIncoming className="w-7 h-7 text-white" />
         </div>
@@ -90,8 +102,23 @@ const IncomingCallAlertCard = ({ call, onAccept, onDecline }) => {
             <span>{clientName}</span>
           </h2>
           <p className="text-xs text-emerald-100 mt-0.5">
-            {language} Required • {notes} • Guaranteed Rate: $75.00/hr ($1.25/min)
+            {language} Required • {notes} • 100% Free Community Accessibility Service
           </p>
+
+          {/* Network Room Code Badge & Instant Copy */}
+          <div className="mt-2.5 flex items-center space-x-2 bg-black/30 px-3 py-1.5 rounded-xl border border-white/20 w-fit">
+            <span className="text-[11px] text-emerald-200 font-semibold">Room Code:</span>
+            <span className="font-mono font-black text-sm text-white">{roomCode}</span>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="ml-1 px-2 py-0.5 rounded-md bg-white/20 hover:bg-white/30 text-white text-[11px] font-bold flex items-center space-x-1 cursor-pointer transition-colors"
+              title="Copy room code to clipboard"
+            >
+              {copiedCode ? <CheckCircle2 className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedCode ? "Copied!" : "Copy Number"}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -130,7 +157,6 @@ const InterpreterDashboardView = ({
   const [incomingCalls, setIncomingCalls] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [isLoadingAppointments, setIsLoadingAppointments] = useState(true);
-  const [payoutSuccess, setPayoutSuccess] = useState(false);
   const [actionNotice, setActionNotice] = useState(null);
 
   // Determine current interpreter identifier
@@ -206,12 +232,10 @@ const InterpreterDashboardView = ({
     };
   }, [interpreterId]);
 
-  const earningsData = {
-    availableBalance: 420.5,
-    today: 214.5,
-    thisWeek: 1280,
-    thisMonth: 4850,
-    completedHours: 32.5,
+  const serviceStats = {
+    sessionsCompleted: 48,
+    volunteeredHours: 32.5,
+    clientsAssisted: 142,
     clientSatisfaction: 4.98
   };
 
@@ -226,9 +250,9 @@ const InterpreterDashboardView = ({
     }
   };
 
-  const handleRequestPayout = () => {
-    setPayoutSuccess(true);
-    setTimeout(() => setPayoutSuccess(false), 4000);
+  const handleVerifyServiceLog = () => {
+    setActionNotice("Community Service Hours & Session Accreditations successfully verified!");
+    setTimeout(() => setActionNotice(null), 4000);
   };
 
   const handleAcceptCall = async (call) => {
@@ -265,7 +289,8 @@ const InterpreterDashboardView = ({
 
   // Helper to trigger a live call directly in Firestore for real-time testing
   const handleSimulateIncomingCall = async () => {
-    setActionNotice("Sending live test call to Firestore...");
+    const testRoomCode = `room-${Math.floor(1000 + Math.random() * 9000)}`;
+    setActionNotice(`Dispatching live call across network with Room Code: ${testRoomCode}...`);
     try {
       const liveCall = await firestoreService.initiateCall({
         clientUserId: "test-client-emergency",
@@ -274,10 +299,12 @@ const InterpreterDashboardView = ({
         interpreterName: user.name || "Certified Interpreter",
         language: "ASL",
         urgency: "urgent",
+        roomCode: testRoomCode,
+        meetingRoomId: testRoomCode,
         notes: "Real-time incoming video call dispatched directly through Firestore database"
       });
-      setActionNotice("Live call dispatched to Firestore! Ringing now.");
-      setTimeout(() => setActionNotice(null), 3500);
+      setActionNotice(`Live call dispatched across network! Room Code: ${testRoomCode} ringing now.`);
+      setTimeout(() => setActionNotice(null), 4000);
     } catch (err) {
       setActionNotice("Test call dispatched.");
       setTimeout(() => setActionNotice(null), 3000);
@@ -415,49 +442,49 @@ const InterpreterDashboardView = ({
 
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Available Balance */}
+        {/* Sessions Delivered */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Available Balance</span>
-            <DollarSign className="w-4 h-4 text-emerald-500" />
+            <span>Sessions Delivered</span>
+            <HeartHandshake className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white">
-            ${earningsData.availableBalance.toFixed(2)}
+            {serviceStats.sessionsCompleted}
           </div>
           <button
-            onClick={handleRequestPayout}
+            onClick={handleVerifyServiceLog}
             className="mt-3 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1 cursor-pointer"
           >
-            <span>{payoutSuccess ? "Payout Initiated!" : "Instant Payout (Stripe)"}</span>
+            <span>Verify Service Log</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Today's Earnings */}
+        {/* Clients Assisted */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Today's Earnings</span>
-            <TrendingUp className="w-4 h-4 text-indigo-500" />
+            <span>Clients Assisted</span>
+            <Users className="w-4 h-4 text-indigo-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white">
-            ${earningsData.today.toFixed(2)}
+            {serviceStats.clientsAssisted}
           </div>
           <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold block mt-3">
-            ↑ 22% vs yesterday
+            100% Free Accessibility
           </span>
         </div>
 
-        {/* Completed Hours */}
+        {/* Dedicated Hours */}
         <div className="bg-white dark:bg-slate-800 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-xs">
           <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1">
-            <span>Hours Interpreted</span>
+            <span>Hours Dedicated</span>
             <Clock className="w-4 h-4 text-purple-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white">
-            {earningsData.completedHours} hrs
+            {serviceStats.volunteeredHours} hrs
           </div>
           <span className="text-[11px] text-slate-500 font-medium block mt-3">
-            This billing month
+            Community Service Time
           </span>
         </div>
 
@@ -468,7 +495,7 @@ const InterpreterDashboardView = ({
             <Star className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 dark:text-white">
-            {earningsData.clientSatisfaction} / 5.0
+            {serviceStats.clientSatisfaction} / 5.0
           </div>
           <span className="text-[11px] text-amber-500 font-bold block mt-3">
             ⭐ 148 Verified 5-Star Reviews
@@ -540,8 +567,8 @@ const InterpreterDashboardView = ({
                 </div>
 
                 <div className="flex items-center space-x-3 self-end sm:self-center shrink-0">
-                  <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                    ${appt.totalCost || 65}.00
+                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-500/20">
+                    Free Service
                   </span>
                   <button
                     onClick={() => onAcceptIncomingCall({

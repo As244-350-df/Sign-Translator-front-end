@@ -24,7 +24,7 @@ import {
   Clock,
   Briefcase,
   Award,
-  DollarSign,
+  HeartHandshake,
   Activity,
   Check,
   Zap,
@@ -274,7 +274,7 @@ export const UserProfile = ({ onOpenAuth }) => {
         secondaryLanguage: secondaryLanguage.trim() || "English",
         bio: bio.trim(),
         availableStatus,
-        hourlyRate: Number(hourlyRate) || 65,
+        hourlyRate: 0,
         certifications: certsArray.length > 0 ? certsArray : ["Certified Signer"],
         verified: firestoreData?.verified ?? true,
         preferences: {
@@ -472,7 +472,7 @@ export const UserProfile = ({ onOpenAuth }) => {
                 <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 mb-2" />
                 <h3 className="text-xs font-bold text-slate-900 dark:text-white">Interpreter Registry</h3>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                  Manage professional credentials, hourly rates, and on-demand dispatch status.
+                  Manage professional credentials, volunteer accessibility, and on-demand dispatch status.
                 </p>
               </div>
             </div>
@@ -820,19 +820,11 @@ export const UserProfile = ({ onOpenAuth }) => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Hourly Booking Rate (USD)
+                    Interpretation Service Model
                   </label>
-                  <div className="relative">
-                    <DollarSign className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                    <input
-                      id="input-profile-hourly-rate"
-                      type="number"
-                      min={20}
-                      max={300}
-                      value={hourlyRate}
-                      onChange={(e) => setHourlyRate(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    />
+                  <div className="w-full px-3.5 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span>100% Free Community Accessibility Service</span>
                   </div>
                 </div>
 

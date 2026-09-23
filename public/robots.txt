@@ -1,0 +1,21 @@
+# Google Search Console Compliant robots.txt for SignLink
+# https://developers.google.com/search/docs/crawling-indexing/robots/intro
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /ws/
+
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /ws/
+
+User-agent: Googlebot-Image
+Allow: /
+Allow: /public/
+Allow: /dist/
+
+# Host and Sitemap Declarations
+Sitemap: https://signlink.app/sitemap.xml
+Host: https://signlink.app

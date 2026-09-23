@@ -10,7 +10,7 @@ export const FirestoreERDTab = () => {
           <div>
             <div className="font-bold">Firestore NoSQL Document & Subcollection Architecture</div>
             <div className="text-amber-700 dark:text-amber-400 text-[11px]">
-              HIPAA PII Data Isolation • Diarized Transcript Subcollections • Atomic Escrow Ledger
+              HIPAA PII Data Isolation • Diarized Transcript Subcollections • Atomic Audit Ledger
             </div>
           </div>
         </div>
@@ -64,8 +64,7 @@ export const FirestoreERDTab = () => {
             <div>• <span className="text-amber-300">interpreterId:</span> string (FK → users.userId)</div>
             <div>• <span className="text-amber-300">certifications:</span> string[] (RID NIC, SC:L, BEI)</div>
             <div>• <span className="text-amber-300">specialties:</span> ["Medical", "Legal", "Crisis"]</div>
-            <div>• <span className="text-amber-300">ratePerHour:</span> number ($)</div>
-            <div>• <span className="text-amber-300">ratePerMinute:</span> number ($/min for urgent)</div>
+            <div>• <span className="text-amber-300">serviceModel:</span> "free_community_access"</div>
             <div>• <span className="text-amber-300">rating:</span> number (1.0 to 5.0)</div>
             <div>• <span className="text-amber-300">availableStatus:</span> "online" | "busy" | "offline"</div>
           </div>
@@ -108,14 +107,14 @@ export const FirestoreERDTab = () => {
           </div>
         </div>
 
-        {/* Collection 4: dispatchQueue & transactions */}
+        {/* Collection 4: dispatchQueue & complianceLog */}
         <div className="p-4 bg-slate-900 text-slate-100 rounded-2xl border border-slate-800 space-y-3 font-mono text-xs shadow-md">
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
             <div className="flex items-center space-x-2 text-rose-400 font-bold">
               <span className="px-1.5 py-0.5 rounded bg-rose-950 text-[10px] text-rose-300">COLLECTIONS</span>
-              <span>/dispatchQueue & /transactions</span>
+              <span>/dispatchQueue & /auditLedger</span>
             </div>
-            <span className="text-[10px] text-rose-400 font-sans font-bold">Ephemeral & Ledger</span>
+            <span className="text-[10px] text-rose-400 font-sans font-bold">Ephemeral & HIPAA Audit</span>
           </div>
           
           <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/80 text-[10px] text-slate-300 space-y-1">
@@ -126,10 +125,10 @@ export const FirestoreERDTab = () => {
           </div>
 
           <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/80 text-[10px] text-slate-300 space-y-1">
-            <span className="text-amber-400 font-bold block">/transactions/{`{transactionId}`} (Escrow)</span>
-            <div>• <span className="text-amber-300">amount:</span> number ($) | <span className="text-amber-300">currency:</span> "USD"</div>
-            <div>• <span className="text-amber-300">type:</span> "escrow_hold" | "instant_payout"</div>
-            <div>• <span className="text-amber-300">status:</span> "held" | "settled" | "released"</div>
+            <span className="text-emerald-400 font-bold block">/auditLedger/{`{auditId}`} (Compliance)</span>
+            <div>• <span className="text-amber-300">serviceType:</span> "free_community_interpretation"</div>
+            <div>• <span className="text-amber-300">accessFee:</span> 0 (Free Access)</div>
+            <div>• <span className="text-amber-300">status:</span> "verified" | "completed"</div>
           </div>
         </div>
       </div>

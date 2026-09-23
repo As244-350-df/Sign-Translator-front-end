@@ -1,4 +1,4 @@
-import { PhoneOff, X, AlertTriangle, Clock, DollarSign, User } from "lucide-react";
+import { PhoneOff, X, AlertTriangle, Clock, User, ShieldCheck } from "lucide-react";
 
 export const DisconnectModal = ({
   isOpen,
@@ -46,8 +46,8 @@ export const DisconnectModal = ({
             <span className="font-mono font-semibold text-emerald-400">{formatTime(callDuration)}</span>
           </div>
           <div className="flex justify-between items-center">
-            <span className="text-slate-400">Estimated Cost:</span>
-            <span className="font-mono font-semibold text-indigo-300">${currentTotalCost.toFixed(2)}</span>
+            <span className="text-slate-400">Access Fee:</span>
+            <span className="font-semibold text-emerald-400">$0.00 (100% Free Accessibility)</span>
           </div>
         </div>
 

@@ -83,8 +83,9 @@ const SignLanguageAvatar = ({
     <div
       ref={containerRef}
       className={`relative flex flex-col bg-slate-950 rounded-3xl overflow-hidden border ${avatarTheme.borderColor} shadow-2xl transition-all duration-300 ${
-        isFullscreen ? "fixed inset-0 z-50 rounded-none" : "w-full aspect-4/3"
+        isFullscreen ? "fixed inset-0 z-50 rounded-none" : "w-full aspect-video"
       } ${className}`}
+      style={isFullscreen ? undefined : { aspectRatio: "16 / 9" }}
     >
       <AvatarHeaderControls
         primarySignLanguage={primarySignLanguage}

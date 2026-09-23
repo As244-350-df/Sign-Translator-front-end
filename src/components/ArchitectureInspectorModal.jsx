@@ -181,10 +181,10 @@ const ArchitectureInspectorModal = ({ isOpen, onClose }) => {
             <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700">
               <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center space-x-2">
                 <ShieldCheck className="w-4 h-4 text-purple-500" />
-                <span>3. HIPAA/GDPR Encrypted Vault & Metered Billing</span>
+                <span>3. HIPAA/GDPR Encrypted Vault & Free Community Access</span>
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
-                Conversations in healthcare and legal contexts are encrypted at rest with session-specific keys. The metered timer calculates per-minute interpreter remuneration with Stripe Escrow holds and automated payout dispatches.
+                Conversations in healthcare and legal contexts are encrypted at rest with session-specific keys. All interpreter sessions are 100% free of charge for Deaf and hard-of-hearing clients as part of the community accessibility initiative.
               </p>
             </div>
           </div>

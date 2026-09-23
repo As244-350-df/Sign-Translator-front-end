@@ -34,7 +34,7 @@ export const SystemDiagramTab = () => {
             <ul className="text-[11px] text-slate-300 space-y-1 list-disc list-inside">
               <li>Interpreter Directory & On-Demand Dispatch</li>
               <li>Booking Lifecycle & Scheduling State</li>
-              <li>Metered Duration Billing ($/min ticker)</li>
+              <li>Free Community Accessibility Dispatch</li>
               <li>Session Transcript Vault & Audit Logs</li>
             </ul>
           </div>

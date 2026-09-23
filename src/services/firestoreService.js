@@ -86,8 +86,8 @@ export const firestoreService = {
           name: payload.name,
           title: profileData.title || 'Certified ASL Interpreter',
           avatar: payload.avatar,
-          ratePerHour: Number(profileData.hourlyRate || 65),
-          ratePerMinute: Number(profileData.ratePerMinute || 1.10),
+          ratePerHour: 0,
+          ratePerMinute: 0,
           languages: profileData.languages || [payload.primaryLanguage || 'ASL', payload.secondaryLanguage || 'English'],
           spokenLanguages: profileData.spokenLanguages || [payload.secondaryLanguage || 'English'],
           specialties: profileData.specialties || ['Medical', 'Legal', 'Educational'],
@@ -239,6 +239,7 @@ export const firestoreService = {
   async createBooking(userId, bookingData) {
     const bookingId = `bk-${Date.now()}`;
     const docPath = `users/${userId}/bookings/${bookingId}`;
+    const roomCode = (bookingData.roomCode || bookingData.meetingRoomId || `room-${Math.floor(1000 + Math.random() * 9000)}`).trim();
     try {
       const payload = {
         id: bookingId,
@@ -251,8 +252,10 @@ export const firestoreService = {
         date: bookingData.date || 'Tomorrow',
         time: bookingData.time || '10:00 AM',
         durationMinutes: bookingData.durationMinutes || 45,
-        totalCost: bookingData.totalCost || 50,
+        totalCost: 0,
         status: 'upcoming',
+        roomCode,
+        meetingRoomId: roomCode,
         notes: bookingData.notes || '',
         createdAt: new Date().toISOString()
       };
@@ -270,8 +273,10 @@ export const firestoreService = {
         // Send in-app notification to interpreter
         await firestoreService.sendNotification(bookingData.interpreterId, {
           title: 'New Client Appointment Booked',
-          message: `${bookingData.clientName || 'A client'} booked an appointment for ${payload.date} at ${payload.time}.`,
-          type: 'booking_new'
+          message: `${bookingData.clientName || 'A client'} booked an appointment for ${payload.date} at ${payload.time}. Room: ${roomCode}`,
+          type: 'booking_new',
+          roomCode,
+          meetingRoomId: roomCode
         }).catch(() => {});
 
         // Initialize Firestore session document for this appointment
@@ -285,9 +290,11 @@ export const firestoreService = {
           interpreterAvatar: bookingData.interpreterAvatar || '',
           language: bookingData.language || 'ASL',
           status: 'matched',
+          roomCode,
+          meetingRoomId: roomCode,
           title: `Scheduled Session with ${bookingData.interpreterName || 'Interpreter'}`,
           durationMinutes: bookingData.durationMinutes || 45,
-          totalCost: bookingData.totalCost || 50,
+          totalCost: 0,
           startedAt: new Date().toISOString(),
           createdAt: new Date().toISOString()
         }).catch(() => {});
@@ -386,15 +393,21 @@ export const firestoreService = {
   },
 
   async sendNotification(userId, notification) {
-    const notifId = `notif-${Date.now()}`;
+    const notifId = `notif-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const docPath = `users/${userId}/notifications/${notifId}`;
     try {
       const payload = {
         id: notifId,
         notificationId: notifId,
+        userId,
         title: notification.title || 'Session Notification',
         message: notification.message || '',
         type: notification.type || 'info',
+        roomCode: (notification.roomCode || notification.meetingRoomId || '').trim(),
+        meetingRoomId: (notification.meetingRoomId || notification.roomCode || '').trim(),
+        sessionId: notification.sessionId || '',
+        clientName: notification.clientName || '',
+        language: notification.language || 'ASL',
         read: false,
         createdAt: new Date().toISOString()
       };
@@ -430,8 +443,8 @@ export const firestoreService = {
             rating: u.rating || 5.0,
             reviewsCount: u.reviewsCount || 1,
             verified: u.verified ?? true,
-            ratePerHour: u.hourlyRate || u.ratePerHour || 65,
-            ratePerMinute: u.ratePerMinute || 1.10,
+            ratePerHour: 0,
+            ratePerMinute: 0,
             languages: u.languages || [u.primaryLanguage || 'ASL', u.secondaryLanguage || 'English'],
             spokenLanguages: u.spokenLanguages || [u.secondaryLanguage || 'English'],
             specialties: u.specialties || ['Medical & Healthcare', 'General Consultation'],
@@ -529,8 +542,8 @@ export const firestoreService = {
           rating: u.rating || 5.0,
           reviewsCount: u.reviewsCount || 1,
           verified: u.verified ?? true,
-          ratePerHour: u.hourlyRate || u.ratePerHour || 65,
-          ratePerMinute: u.ratePerMinute || 1.10,
+          ratePerHour: 0,
+          ratePerMinute: 0,
           languages: u.languages || [u.primaryLanguage || 'ASL', u.secondaryLanguage || 'English'],
           spokenLanguages: u.spokenLanguages || [u.secondaryLanguage || 'English'],
           specialties: u.specialties || ['Medical & Healthcare', 'General Consultation'],
@@ -562,8 +575,8 @@ export const firestoreService = {
         rating: Number(data.rating || 4.95),
         reviewsCount: Number(data.reviewsCount || 1),
         verified: Boolean(data.verified ?? true),
-        ratePerHour: Number(data.ratePerHour || 65),
-        ratePerMinute: Number(data.ratePerMinute || 1.10),
+        ratePerHour: 0,
+        ratePerMinute: 0,
         languages: Array.isArray(data.languages) ? data.languages : ['ASL', 'English'],
         spokenLanguages: Array.isArray(data.spokenLanguages) ? data.spokenLanguages : ['English'],
         specialties: Array.isArray(data.specialties) ? data.specialties : ['Medical', 'Legal', 'Educational'],
@@ -640,9 +653,11 @@ export const firestoreService = {
     interpreterName = 'Certified Interpreter',
     language = 'ASL',
     urgency = 'urgent',
+    roomCode = null,
     meetingRoomId = null,
     notes = ''
   }) {
+    const finalRoomCode = (roomCode || meetingRoomId || `room-${Math.floor(1000 + Math.random() * 9000)}`).trim();
     const sessionId = `call-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
     const docPath = `sessions/${sessionId}`;
     try {
@@ -658,13 +673,14 @@ export const firestoreService = {
         language,
         urgency,
         status: 'pending', // 'pending' = ringing on interpreter's dashboard
-        meetingRoomId: meetingRoomId || `room-${sessionId}`,
+        roomCode: finalRoomCode,
+        meetingRoomId: finalRoomCode,
         title: `Live Call: ${clientName} (${language})`,
         date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
         duration: "In Progress",
-        summary: `Real-time sign language interpretation call with ${interpreterName}.`,
+        summary: `Real-time sign language interpretation call with ${interpreterName}. Room: ${finalRoomCode}`,
         fullTranscript: [],
-        keyTerms: ["Live Call", language],
+        keyTerms: ["Live Call", language, finalRoomCode],
         notes,
         startedAt: new Date().toISOString(),
         createdAt: new Date().toISOString()
@@ -672,16 +688,49 @@ export const firestoreService = {
 
       await setDoc(doc(db, 'sessions', sessionId), payload);
 
-      // In-app alert notification directly to the interpreter's profile
+      // In-app alert notification directly with the REAL room code across the network
+      const notifData = {
+        title: '⚡ Incoming Live Video Call',
+        message: `${clientName} is calling for ${language} interpretation. Room Code: ${finalRoomCode}`,
+        type: 'incoming_call',
+        sessionId,
+        roomCode: finalRoomCode,
+        meetingRoomId: finalRoomCode,
+        clientName,
+        language
+      };
+
+      // 1. Notify specific interpreter if chosen
       if (interpreterId) {
-        await firestoreService.sendNotification(interpreterId, {
-          title: '⚡ Incoming Live Video Call',
-          message: `${clientName} is calling for real-time ${language} interpretation.`,
-          type: 'incoming_call',
-          sessionId,
-          clientName,
-          language
-        }).catch(() => {});
+        await firestoreService.sendNotification(interpreterId, notifData).catch(() => {});
+      }
+      // 2. Also notify the default certified interpreter profile 'int-01'
+      if (interpreterId !== 'int-01') {
+        await firestoreService.sendNotification('int-01', notifData).catch(() => {});
+      }
+      // 3. Also notify 'user-01' (default guest/demo user) so unauthenticated interpreter sessions receive it
+      if (interpreterId !== 'user-01' && clientUserId !== 'user-01') {
+        await firestoreService.sendNotification('user-01', notifData).catch(() => {});
+      }
+      // 4. Also store in global interpreter channel
+      await firestoreService.sendNotification('all_interpreters', notifData).catch(() => {});
+
+      // Also register into real-time dispatch queue so any connected interpreter receives it
+      try {
+        await setDoc(doc(db, 'dispatchQueue', sessionId), {
+          dispatchId: sessionId,
+          userId: clientUserId || auth.currentUser?.uid || 'client-user',
+          userName: clientName,
+          language,
+          urgency,
+          roomCode: finalRoomCode,
+          meetingRoomId: finalRoomCode,
+          status: 'searching',
+          offeredToInterpreterId: interpreterId || null,
+          createdAt: new Date().toISOString()
+        });
+      } catch (dispatchErr) {
+        console.warn('Dispatch queue mirror notice:', dispatchErr);
       }
 
       return payload;
@@ -694,37 +743,30 @@ export const firestoreService = {
   subscribeIncomingCalls(interpreterId, onCallsUpdate) {
     const colPath = 'sessions';
     try {
-      if (!interpreterId) return () => {};
-      
-      // Query sessions where interpreterId matches and status is 'pending'
+      // Query sessions where status is 'pending'
       const q = query(
         collection(db, colPath),
-        where('interpreterId', '==', interpreterId),
         where('status', '==', 'pending'),
-        limit(5)
+        limit(15)
       );
 
       return onSnapshot(q, (snapshot) => {
         const pendingCalls = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        onCallsUpdate(pendingCalls);
+        // Filter calls matching this interpreter or open to all certified interpreters
+        const matched = pendingCalls.filter(c => {
+          if (!interpreterId) return true;
+          return (
+            !c.interpreterId ||
+            c.interpreterId === interpreterId ||
+            c.interpreterId === 'int-01' ||
+            c.interpreterId === 'all' ||
+            interpreterId === 'int-01'
+          );
+        });
+        onCallsUpdate(matched);
       }, (err) => {
         console.warn('Incoming calls subscription notice:', err?.message);
-        // Fallback: general query for any active pending calls
-        try {
-          const fallbackQ = query(
-            collection(db, colPath),
-            where('status', '==', 'pending'),
-            limit(10)
-          );
-          return onSnapshot(fallbackQ, (snap) => {
-            const calls = snap.docs
-              .map(d => ({ id: d.id, ...d.data() }))
-              .filter(c => !c.interpreterId || c.interpreterId === interpreterId);
-            onCallsUpdate(calls);
-          });
-        } catch (fbErr) {
-          console.warn('Fallback incoming call query notice:', fbErr?.message);
-        }
+        handleFirestoreError(err, OperationType.LIST, colPath);
       });
     } catch (err) {
       console.warn('Error creating incoming calls listener:', err);
@@ -849,8 +891,8 @@ export const firestoreService = {
               rating: u.rating || 5.0,
               reviewsCount: u.reviewsCount || 1,
               verified: u.verified ?? true,
-              ratePerHour: u.hourlyRate || u.ratePerHour || 65,
-              ratePerMinute: u.ratePerMinute || 1.10,
+              ratePerHour: 0,
+              ratePerMinute: 0,
               languages: u.languages || [u.primaryLanguage || 'ASL'],
               spokenLanguages: u.spokenLanguages || [u.secondaryLanguage || 'English'],
               specialties: u.specialties || ['Medical & Healthcare', 'Corporate'],

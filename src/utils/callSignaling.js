@@ -146,6 +146,7 @@ export class CallSignalingEngine {
           this.ws.close();
           return;
         }
+        this.reconnectAttempts = 0;
         console.log(`[Signaling WS] Connected to ${wsUrl} for room ${this.roomId}`);
 
         // Join room immediately on open
@@ -183,13 +184,16 @@ export class CallSignalingEngine {
       this.ws.onclose = () => {
         if (this.pingInterval) clearInterval(this.pingInterval);
         if (!this.isDestroyed) {
-          // Reconnect with backoff
+          // Reconnect with exponential backoff
+          const attempts = this.reconnectAttempts || 0;
+          const delay = Math.min(10000, 1200 * Math.pow(1.5, attempts));
+          this.reconnectAttempts = attempts + 1;
           this.reconnectTimer = setTimeout(() => {
             if (!this.isDestroyed) {
-              console.log("[Signaling WS] Attempting reconnection...");
+              console.log(`[Signaling WS] Attempting reconnection (attempt ${this.reconnectAttempts})...`);
               this.connectWebSocket();
             }
-          }, 2500);
+          }, delay);
         }
       };
     } catch (err) {
@@ -627,6 +631,11 @@ export class CallSignalingEngine {
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") {
           this.isConnected = true;
+          this.iceRestartRetries = 0;
+          if (this.iceRestartTimer) {
+            clearTimeout(this.iceRestartTimer);
+            this.iceRestartTimer = null;
+          }
           this.startStatsMonitoring(1500);
           if (this.onPeerStateChange) {
             this.onPeerStateChange({
@@ -636,15 +645,20 @@ export class CallSignalingEngine {
               transport: "webrtc"
             });
           }
-        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+        } else if (pc.connectionState === "disconnected") {
+          console.warn("[Signaling WebRTC] Peer connection disconnected, waiting for transient network recovery...");
+        } else if (pc.connectionState === "failed") {
+          console.warn("[Signaling WebRTC] Peer connection failed. Triggering ICE restart...");
           this.isConnected = false;
           this.stopStatsMonitoring();
-          if (this.onPeerStateChange) {
-            this.onPeerStateChange({
-              status: "degraded",
-              transport: "websocket_fallback"
-            });
-          }
+          this.triggerIceRestart();
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === "failed") {
+          console.warn("[Signaling WebRTC] ICE connection state: failed. Triggering ICE restart...");
+          this.triggerIceRestart();
         }
       };
 
@@ -947,9 +961,67 @@ export class CallSignalingEngine {
     }
   }
 
+  async triggerIceRestart() {
+    if (this.isDestroyed || !this.peerConnection) return;
+    if ((this.iceRestartRetries || 0) >= 3) {
+      console.warn("[Signaling WebRTC] Max ICE restart attempts reached, switching to websocket fallback.");
+      if (this.onPeerStateChange) {
+        this.onPeerStateChange({
+          status: "degraded",
+          transport: "websocket_fallback"
+        });
+      }
+      return;
+    }
+
+    this.iceRestartRetries = (this.iceRestartRetries || 0) + 1;
+    const backoffMs = Math.min(6000, 1000 * Math.pow(1.8, this.iceRestartRetries - 1));
+
+    if (this.iceRestartTimer) clearTimeout(this.iceRestartTimer);
+    this.iceRestartTimer = setTimeout(async () => {
+      if (this.isDestroyed || !this.peerConnection) return;
+      try {
+        console.log(`[Signaling WebRTC] Attempting ICE restart (attempt ${this.iceRestartRetries})...`);
+        if (typeof this.peerConnection.restartIce === "function") {
+          this.peerConnection.restartIce();
+        }
+        if (!this.isPolite) {
+          this.makingOffer = true;
+          const offer = await this.peerConnection.createOffer({
+            iceRestart: true,
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+          });
+          await this.peerConnection.setLocalDescription(offer);
+          this.makingOffer = false;
+          this.sendMessage({
+            type: "WEBRTC_OFFER",
+            offer
+          });
+        }
+      } catch (err) {
+        console.warn("[Signaling WebRTC] ICE restart attempt error:", err);
+        this.closePeerConnection();
+        if (this.localStream && (this.remotePeerId || this.remotePeerRole)) {
+          this.startWebRTC(!this.isPolite);
+        }
+      }
+    }, backoffMs);
+  }
+
   closePeerConnection() {
+    if (this.iceRestartTimer) {
+      clearTimeout(this.iceRestartTimer);
+      this.iceRestartTimer = null;
+    }
     this.stopStatsMonitoring();
     this.pendingIceCandidates = [];
+    if (this.remoteMediaStream) {
+      try {
+        this.remoteMediaStream.getTracks().forEach((track) => track.stop());
+      } catch {}
+      this.remoteMediaStream = null;
+    }
     if (this.peerConnection) {
       try {
         this.peerConnection.close();
@@ -962,6 +1034,10 @@ export class CallSignalingEngine {
   destroy() {
     this.isDestroyed = true;
     this.stopStatsMonitoring();
+    if (this.iceRestartTimer) {
+      clearTimeout(this.iceRestartTimer);
+      this.iceRestartTimer = null;
+    }
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.pingInterval) clearInterval(this.pingInterval);
 
@@ -987,5 +1063,18 @@ export class CallSignalingEngine {
     }
 
     this.closePeerConnection();
+
+    // Detach callbacks to free closures from memory
+    this.onRemoteStream = null;
+    this.onRemoteVideoFrame = null;
+    this.onPeerStateChange = null;
+    this.onPeerMediaStatus = null;
+    this.onRemoteChatMessage = null;
+    this.onRemoteHandRaise = null;
+    this.onRemoteTranslatedMessage = null;
+    this.onStatsUpdate = null;
+    this.onQualityTierChange = null;
+    this.onSecurityAlert = null;
+    this.onE2EEStatusChange = null;
   }
 }

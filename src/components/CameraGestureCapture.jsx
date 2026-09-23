@@ -368,7 +368,10 @@ export const CameraGestureCapture = ({
       className={`relative flex flex-col bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl ${className}`}
     >
       {/* Video Viewport Area */}
-      <div className="relative aspect-4/3 w-full bg-black overflow-hidden flex items-center justify-center">
+      <div
+        className="relative aspect-video w-full bg-black overflow-hidden flex items-center justify-center"
+        style={{ aspectRatio: "16 / 9" }}
+      >
         {/* Live Camera Video Feed */}
         <video
           ref={videoRef}
@@ -379,7 +382,7 @@ export const CameraGestureCapture = ({
             transform: isMirrored ? "scaleX(-1)" : "none",
             transformOrigin: "center center"
           }}
-          className={`w-full h-full object-cover transition-opacity duration-300 ${
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
             cameraStatus === "active" ? "opacity-100" : "opacity-0"
           }`}
         />

@@ -65,10 +65,10 @@ const InterpreterProfileModal = ({
             <div className="flex items-center space-x-2">
               {isOnline && <button
     onClick={() => {
-      onStartCall(interpreter.id);
+      onStartCall(interpreter, "client");
       onClose();
     }}
-    className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-emerald-500/20 transition-all"
+    className="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
   >
                   <Video className="w-4 h-4" />
                   <span>Start Instant Video Call</span>
@@ -126,9 +126,9 @@ const InterpreterProfileModal = ({
 
             <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 text-center">
               <span className="font-bold text-emerald-600 dark:text-emerald-400 text-sm block">
-                ${interpreter.ratePerHour || 65}
+                Free
               </span>
-              <span className="text-[10px] text-slate-400">per hour</span>
+              <span className="text-[10px] text-slate-400">100% Accessible</span>
             </div>
           </div>
 
@@ -219,7 +219,7 @@ const InterpreterProfileModal = ({
                 }}
                 className="w-full mt-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-all shadow-md shadow-indigo-500/25 active:scale-98"
               >
-                Confirm Appointment for {selectedSlot} (${interpreter.ratePerHour || 65}/hr)
+                Confirm Free Appointment for {selectedSlot}
               </button>
             )}
           </div>

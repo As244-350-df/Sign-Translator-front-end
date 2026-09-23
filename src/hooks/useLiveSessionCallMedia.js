@@ -134,6 +134,12 @@ export const useLiveSessionCallMedia = ({
         localStreamRef.current = null;
         setLocalStream(null);
       }
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+      if (mainVideoRef.current) {
+        mainVideoRef.current.srcObject = null;
+      }
     }
 
     return () => {
@@ -142,6 +148,12 @@ export const useLiveSessionCallMedia = ({
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
         setLocalStream(null);
+      }
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+      if (mainVideoRef.current) {
+        mainVideoRef.current.srcObject = null;
       }
     };
   }, [useRealCameraLocal, cameraFacing, setUseRealCameraLocal, attachStreamToVideos]);

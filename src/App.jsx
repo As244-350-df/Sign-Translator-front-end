@@ -107,8 +107,11 @@ function App() {
     }
   };
 
-  const handleStartCall = (roomIdOrInterpreterId = "int-01", role = null) => {
-    setActiveCallInterpreterId(roomIdOrInterpreterId);
+  const handleStartCall = (roomIdOrInterpreterId = "room-4927", role = null) => {
+    const finalRoomId = typeof roomIdOrInterpreterId === "object"
+      ? (roomIdOrInterpreterId?.roomCode || roomIdOrInterpreterId?.meetingRoomId || roomIdOrInterpreterId?.sessionId || roomIdOrInterpreterId?.id || "room-4927")
+      : (roomIdOrInterpreterId || "room-4927");
+    setActiveCallInterpreterId(finalRoomId);
     if (role) {
       setInitialCallPerspective(role);
     }
@@ -116,10 +119,16 @@ function App() {
   };
 
   const handlePromptJoinIncomingCall = (call, defaultRole = "interpreter") => {
-    const code = call?.meetingRoomId || call?.sessionId || call?.interpreterId || "room-4927";
+    const code = (
+      call?.roomCode ||
+      call?.meetingRoomId ||
+      call?.sessionId ||
+      (typeof call === "string" ? call : null) ||
+      "room-4927"
+    ).trim();
     setJoinRoomInitialCode(code);
     setJoinRoomInitialRole(defaultRole);
-    setJoinRoomCallContext(call);
+    setJoinRoomCallContext(typeof call === "object" ? { ...call, roomCode: code, meetingRoomId: code } : { roomCode: code, meetingRoomId: code });
     setIsJoinRoomOpen(true);
   };
 
@@ -170,8 +179,8 @@ function App() {
         date: "Tomorrow",
         time: slot || "02:00 PM",
         durationMinutes: 45,
-        totalCost: Number((((interpreter.ratePerHour || 65) / 60) * 45).toFixed(2)),
-        notes: `Scheduled appointment with ${interpreter.name}`
+        totalCost: 0,
+        notes: `Scheduled free community appointment with ${interpreter.name}`
       });
     } catch (err) {
       console.error("Booking failed:", err);
@@ -266,10 +275,14 @@ function App() {
               settings={settings}
               onSelectInterpreter={(int) => setSelectedInterpreter(int)}
               onStartCall={(target) => {
-                const targetCode = typeof target === "string" ? target : (target?.id || target?.interpreterId || "room-4927");
+                const targetCode = typeof target === "string"
+                  ? target
+                  : (target?.roomCode || target?.meetingRoomId || target?.sessionId || target?.id || target?.interpreterId || "room-4927");
                 handlePromptJoinIncomingCall({
+                  roomCode: targetCode,
+                  meetingRoomId: targetCode,
                   sessionId: targetCode,
-                  clientName: typeof target === "object" ? target?.name : "Interpreter",
+                  clientName: typeof target === "object" ? (target?.interpreterName || target?.name) : "Interpreter",
                   notes: "Live Call"
                 }, "client");
               }}
@@ -280,11 +293,15 @@ function App() {
             {activeTab === "schedule" && <ScheduleView
               settings={settings}
               onJoinCall={(target) => {
-                const targetCode = typeof target === "string" ? target : (target?.id || target?.interpreterId || "room-4927");
+                const targetCode = typeof target === "string"
+                  ? target
+                  : (target?.roomCode || target?.meetingRoomId || target?.sessionId || target?.id || target?.interpreterId || "room-4927");
                 handlePromptJoinIncomingCall({
+                  roomCode: targetCode,
+                  meetingRoomId: targetCode,
                   sessionId: targetCode,
                   notes: "Scheduled Appointment"
-                }, "client");
+                }, user?.role === "interpreter" ? "interpreter" : "client");
               }}
               onOpenDirectory={() => setActiveTab("directory")}
             />}
@@ -390,17 +407,28 @@ function App() {
       />
 
       <NotificationsModal
-    isOpen={isNotificationsOpen}
-    onClose={() => setIsNotificationsOpen(false)}
-    notifications={notifications}
-    onMarkAllAsRead={handleMarkAllNotificationsAsRead}
-    onSelectNotification={(n) => {
-      setIsNotificationsOpen(false);
-      if (n.type === "session" || n.type === "booking") {
-        setActiveTab("schedule");
-      }
-    }}
-  />
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        notifications={notifications}
+        onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+        onSelectNotification={(n) => {
+          setIsNotificationsOpen(false);
+          const code = (n.roomCode || n.meetingRoomId || n.sessionId || "").trim();
+          if (code || n.type === "incoming_call" || n.type === "call" || n.type === "session") {
+            const roleToJoin = user?.role === "interpreter" ? "interpreter" : "client";
+            handlePromptJoinIncomingCall({
+              roomCode: code || "room-4927",
+              meetingRoomId: code || "room-4927",
+              sessionId: n.sessionId || code,
+              clientName: n.clientName || "Client",
+              language: n.language || "ASL",
+              notes: n.message || "Live video session"
+            }, roleToJoin);
+          } else if (n.type === "booking") {
+            setActiveTab("schedule");
+          }
+        }}
+      />
 
       <SystemErrorModal
     type={errorModalType}
@@ -439,6 +467,7 @@ function App() {
         initialRoomCode={joinRoomInitialCode}
         initialRole={joinRoomInitialRole}
         callContext={joinRoomCallContext}
+        currentUser={user}
         onJoinRoom={(roomId, role) => handleStartCall(roomId, role)}
       />
 

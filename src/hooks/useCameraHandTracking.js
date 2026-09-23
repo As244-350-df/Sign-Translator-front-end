@@ -189,7 +189,14 @@ export const useCameraHandTracking = ({
           audio: false
         });
       } catch (idealErr) {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (basicErr) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { min: 320 }, height: { min: 240 } },
+            audio: false
+          });
+        }
       }
 
       if (!stream) {
@@ -217,6 +224,21 @@ export const useCameraHandTracking = ({
             tips: 'Click "Retry Camera Stream" to reconnect.',
             canRetry: true
           });
+        };
+        videoTrack.onmute = () => {
+          console.warn("[Camera] Video track muted by hardware shutter or system privacy setting.");
+          setCameraError({
+            type: "hardware_muted",
+            title: "Camera Hardware Shutter Engaged",
+            message: "The camera stream is paused by your device's physical privacy slider or operating system.",
+            tips: "Slide open your webcam's physical cover or allow video in your operating system privacy settings.",
+            canRetry: true
+          });
+        };
+        videoTrack.onunmute = () => {
+          console.log("[Camera] Video track unmuted, resuming active stream.");
+          setCameraError(null);
+          setCameraStreamStatus("active");
         };
       }
 
@@ -255,6 +277,16 @@ export const useCameraHandTracking = ({
         title = "Camera Already in Use";
         message = "Your camera is currently locked by another application or browser tab.";
         tips = 'Close other video calling apps or browser tabs using the camera, then click "Retry Camera Stream".';
+      } else if (err?.name === "OverconstrainedError") {
+        errType = "overconstrained";
+        title = "Camera Constraints Unmet";
+        message = `Requested camera parameter (${err?.constraint || "resolution/framerate"}) is not supported by device.`;
+        tips = 'Click "Retry Camera Stream" to reconnect with standard resolution constraints.';
+      } else if (err?.name === "AbortError") {
+        errType = "aborted";
+        title = "Camera Setup Aborted";
+        message = "The webcam initialization was interrupted by device sleep or hardware reset.";
+        tips = 'Click "Retry Camera Stream" to reinitialize the hardware capture pipeline.';
       } else if (err?.name === "SecurityError") {
         errType = "security";
         title = "Security Restriction";
@@ -388,6 +420,12 @@ export const useCameraHandTracking = ({
         } catch {}
         mediaStreamRef.current = null;
       }
+      if (videoRef.current) {
+        try {
+          videoRef.current.srcObject = null;
+          videoRef.current.removeAttribute("src");
+        } catch {}
+      }
       setCameraStreamStatus("idle");
     }
   }, [isCameraActive, useRealWebcam, inputSourceMode]);
@@ -399,6 +437,12 @@ export const useCameraHandTracking = ({
         try {
           mediaStreamRef.current.getTracks().forEach((t) => t.stop());
           mediaStreamRef.current = null;
+        } catch {}
+      }
+      if (videoRef.current) {
+        try {
+          videoRef.current.srcObject = null;
+          videoRef.current.removeAttribute("src");
         } catch {}
       }
       if (uploadedVideoUrl) {
@@ -644,7 +688,8 @@ export const useCameraHandTracking = ({
       tracker.setElements(null, canvas, false);
     }
     let lastDetectionTime = 0;
-    const DETECTION_INTERVAL_MS = 45; // ~22 FPS detection keeps CPU cool and prevents tab lag over time
+    let dynamicIntervalMs = 45; // ~22 FPS baseline
+    const recentLatencies = [];
 
     const render = (time) => {
       if (typeof document !== "undefined" && document.hidden) {
@@ -686,11 +731,26 @@ export const useCameraHandTracking = ({
         }
 
         const now = performance.now();
-        const shouldRunDetection = now - lastDetectionTime >= DETECTION_INTERVAL_MS;
+        const shouldRunDetection = now - lastDetectionTime >= dynamicIntervalMs;
+        let detectionStartTime = 0;
         if (shouldRunDetection) {
           lastDetectionTime = now;
+          detectionStartTime = performance.now();
         }
         const detection = tracker.processFrame(time, shouldRunDetection);
+
+        // Dynamically monitor processing duration to prevent UI lag on lower-end devices / battery-saver
+        if (shouldRunDetection && detectionStartTime > 0) {
+          const duration = performance.now() - detectionStartTime;
+          recentLatencies.push(duration);
+          if (recentLatencies.length > 10) recentLatencies.shift();
+          const avgLatency = recentLatencies.reduce((a, b) => a + b, 0) / recentLatencies.length;
+          if (avgLatency > 26 && dynamicIntervalMs < 75) {
+            dynamicIntervalMs = Math.min(75, dynamicIntervalMs + 5);
+          } else if (avgLatency < 15 && dynamicIntervalMs > 45) {
+            dynamicIntervalMs = Math.max(45, dynamicIntervalMs - 5);
+          }
+        }
 
         // Live AI Stream telemetry & continuous recognition
         if (detection.isRealHandDetected && detection.signMeaning) {

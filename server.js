@@ -2219,6 +2219,17 @@ Respond ONLY with valid JSON:
   }
 });
 
+// Google Search Console & SEO Discovery Endpoints
+app.get("/robots.txt", (_req, res) => {
+  const robotsPath = path.join(process.cwd(), "public", "robots.txt");
+  res.type("text/plain").sendFile(robotsPath);
+});
+
+app.get("/sitemap.xml", (_req, res) => {
+  const sitemapPath = path.join(process.cwd(), "public", "sitemap.xml");
+  res.type("application/xml").sendFile(sitemapPath);
+});
+
 // 404 handler for unknown API routes
 app.all("/api/*", (req, res) => {
   res.status(404).json({ success: false, error: `Endpoint ${req.method} ${req.originalUrl} not found` });

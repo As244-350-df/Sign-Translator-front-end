@@ -11,7 +11,7 @@ import {
   Clock,
   ShieldCheck,
   Lock,
-  DollarSign,
+  HeartHandshake,
   CheckCircle2,
   ListTodo
 } from "lucide-react";
@@ -168,7 +168,7 @@ Signed & Encrypted via SignLink WebRTC & Gemini Multimodal Suite
     onClick={() => setActiveTab("billing")}
     className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all ${activeTab === "billing" ? "border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400" : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"}`}
   >
-            Billing & Escrow Receipt
+            Accessibility & Service Record
           </button>
         </div>
 
@@ -274,19 +274,17 @@ Signed & Encrypted via SignLink WebRTC & Gemini Multimodal Suite
 
           </div>}
 
-        {
-    /* Tab 3: Billing & Escrow Receipt */
-  }
+        {/* Tab 3: Accessibility & Service Verification */}
         {activeTab === "billing" && <div className="space-y-4">
             
             <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
               <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
                 <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center space-x-1.5">
-                  <DollarSign className="w-4 h-4 text-emerald-500" />
-                  <span>Stripe Escrow Itemized Breakdown</span>
+                  <HeartHandshake className="w-4 h-4 text-emerald-500" />
+                  <span>SignLink Accessibility & Service Verification</span>
                 </span>
                 <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                  Paid & Settled
+                  100% Free Service
                 </span>
               </div>
 
@@ -296,23 +294,23 @@ Signed & Encrypted via SignLink WebRTC & Gemini Multimodal Suite
                   <span className="font-bold text-slate-900 dark:text-white">{session.duration}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Interpreter Base Rate:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">$75.00 / hr ($1.25 / min)</span>
+                  <span>Interpretation Service:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">Community Accessibility (Free)</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Platform SFU & Recording Fee:</span>
-                  <span className="font-bold text-slate-900 dark:text-white">$0.00 (Tier Included)</span>
+                  <span>Platform SFU & Recording:</span>
+                  <span className="font-bold text-slate-900 dark:text-white">$0.00 (Fully Covered)</span>
                 </div>
                 <div className="flex justify-between pt-2 border-t border-slate-200 dark:border-slate-700 font-bold text-sm text-slate-900 dark:text-white">
-                  <span>Total Escrow Payout:</span>
-                  <span className="text-emerald-600 dark:text-emerald-400">$3.45</span>
+                  <span>Total Cost to Client:</span>
+                  <span className="text-emerald-600 dark:text-emerald-400">$0.00 (Free Access)</span>
                 </div>
               </div>
             </div>
 
             <div className="p-3 bg-purple-50 dark:bg-purple-950/30 rounded-2xl border border-purple-200 dark:border-purple-800 text-xs text-purple-900 dark:text-purple-200 flex items-center space-x-2">
               <ShieldCheck className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-              <span>Payment automatically disbursed to certified interpreter via Stripe Connect Instant Payouts.</span>
+              <span>Certified interpretation delivered as an open community service under HIPAA encryption standards.</span>
             </div>
 
           </div>}

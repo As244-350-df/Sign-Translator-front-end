@@ -432,8 +432,8 @@ const LiveSessionCallView = ({
   const handleZoomIn = () => setCameraZoom((prev) => Math.min(3.5, +(prev + 0.25).toFixed(2)));
   const handleZoomOut = () => setCameraZoom((prev) => Math.max(1, +(prev - 0.25).toFixed(2)));
 
-  const ratePerSecond = (interpreter.ratePerMinute || 1.25) / 60;
-  const currentTotalCost = callDuration * ratePerSecond;
+  const ratePerSecond = 0;
+  const currentTotalCost = 0;
   const [currentCaption, setCurrentCaption] = useState(
     `"The physician confirms: take 1 tablet with water each morning after breakfast."`
   );
@@ -828,6 +828,19 @@ const LiveSessionCallView = ({
         onToggleLayoutMode={() => setLayoutMode((prev) => (prev === "pip" ? "split" : "pip"))}
         roomId={interpreterId || "room-4927"}
         onCopyRoomLink={handleCopySessionLink}
+        onRingInterpreters={async () => {
+          const finalCode = (interpreterId || "room-4927").trim();
+          await firestoreService.initiateCall({
+            clientUserId: user?.userId || user?.id || "client-user",
+            clientName: user?.name || "Client (Deaf Signer)",
+            interpreterId: "int-01",
+            roomCode: finalCode,
+            meetingRoomId: finalCode,
+            language: settings?.primarySignLanguage || "ASL",
+            urgency: "urgent",
+            notes: `Client is waiting in Live Call Room: ${finalCode}`
+          });
+        }}
         showChat={showChat}
         onToggleChat={() => setShowChat((prev) => !prev)}
         autoChatSigns={autoChatSigns}

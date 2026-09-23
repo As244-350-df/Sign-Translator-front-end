@@ -35,7 +35,11 @@ export const CameraFeedStage = ({
   }, [tracking.cameraStreamStatus, tracking.inputSourceMode]);
 
   return (
-    <div className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center">
+    <div
+      id="live-camera-feed-stage"
+      className="relative aspect-video w-full bg-slate-950 rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl border border-slate-800 flex items-center justify-center"
+      style={{ aspectRatio: "16 / 9" }}
+    >
       {tracking.cameraNoticeMessage && tracking.inputSourceMode === "webcam" && (
         <div className="absolute top-3 left-3 right-3 z-40 p-2.5 bg-indigo-950/95 backdrop-blur-md border border-indigo-500/50 rounded-2xl shadow-xl flex items-center justify-between text-xs text-indigo-200 animate-in slide-in-from-top-2">
           <div className="flex items-center space-x-2 min-w-0 pr-2">
@@ -227,15 +231,17 @@ export const CameraFeedStage = ({
           </div>
         </>
       ) : (
-        <div className="text-center p-8">
-          <CameraOff className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <p className="text-slate-300 font-semibold mb-1">Camera Feed Paused</p>
-          <p className="text-xs text-slate-500 max-w-xs mb-4">
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950 z-20 select-none">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-3 shadow-inner">
+            <CameraOff className="w-6 h-6 sm:w-7 sm:h-7 text-slate-500" />
+          </div>
+          <p className="text-slate-200 font-bold text-sm sm:text-base mb-1">Camera Feed Paused</p>
+          <p className="text-xs text-slate-400 max-w-xs mb-4">
             Enable camera to start live sign language landmark tracking and translation.
           </p>
           <button
             onClick={() => setIsCameraActive(true)}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-md active:scale-95"
           >
             Start Translation Camera
           </button>

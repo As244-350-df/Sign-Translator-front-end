@@ -139,39 +139,61 @@ export const FirebaseProvider = ({ children }) => {
     return () => unsubscribe();
   }, []);
 
-  // Listen to real-time collections when user is logged in
+  // Listen to real-time collections for active user and interpreter channels
   useEffect(() => {
-    if (!firebaseUser) return;
+    const effectiveUserId = firebaseUser?.uid || user?.userId || user?.id || 'user-01';
 
-    const unsubSessions = firestoreService.subscribeSessions(firebaseUser.uid, (data) => {
+    const unsubSessions = firestoreService.subscribeSessions(effectiveUserId, (data) => {
       if (data && data.length > 0) {
         setSessions(data);
       }
     });
 
-    const unsubBookings = firestoreService.subscribeBookings(firebaseUser.uid, (data) => {
+    const unsubBookings = firestoreService.subscribeBookings(effectiveUserId, (data) => {
       if (data && data.length > 0) {
         setBookings(data);
       }
     });
 
-    const unsubBookmarks = firestoreService.subscribeBookmarks(firebaseUser.uid, (data) => {
-      setBookmarks(data);
+    const unsubBookmarks = firestoreService.subscribeBookmarks(effectiveUserId, (data) => {
+      setBookmarks(data || []);
     });
 
-    const unsubNotifs = firestoreService.subscribeNotifications(firebaseUser.uid, (data) => {
-      if (data && data.length > 0) {
-        setNotifications(data);
-      }
+    // Subscriptions for in-app notifications:
+    // Listen to effective user channel, plus interpreter channels if role is interpreter or in demo mode
+    const notifChannels = new Set([effectiveUserId, 'all_interpreters']);
+    if (user?.role === 'interpreter' || effectiveUserId === 'user-01' || effectiveUserId === 'int-01') {
+      notifChannels.add('int-01');
+    }
+
+    const unsubsNotifs = [];
+    const receivedNotifMap = new Map();
+    // Pre-populate with initial notifications
+    MOCK_NOTIFICATIONS.forEach((n) => receivedNotifMap.set(n.id || n.notificationId, n));
+
+    notifChannels.forEach((targetChannel) => {
+      const unsub = firestoreService.subscribeNotifications(targetChannel, (liveNotifs) => {
+        if (liveNotifs && liveNotifs.length > 0) {
+          liveNotifs.forEach((n) => {
+            const nId = n.id || n.notificationId;
+            if (nId) receivedNotifMap.set(nId, n);
+          });
+          const merged = Array.from(receivedNotifMap.values()).sort(
+            (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+          );
+          setNotifications(merged);
+        }
+      });
+      unsubsNotifs.push(unsub);
     });
 
     return () => {
-      unsubSessions();
-      unsubBookings();
-      unsubBookmarks();
-      unsubNotifs();
+      unsubSessions && unsubSessions();
+      unsubBookings && unsubBookings();
+      unsubBookmarks && unsubBookmarks();
+      unsubsNotifs.forEach((u) => u && u());
     };
-  }, [firebaseUser]);
+  }, [firebaseUser, user?.userId, user?.id, user?.role]);
 
   // Google Login
   const loginWithGoogle = async () => {
@@ -399,8 +421,8 @@ export const FirebaseProvider = ({ children }) => {
       name: user?.name || 'Registered Interpreter',
       title: customDetails.title || 'Certified ASL / English Interpreter',
       avatar: user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
-      ratePerHour: Number(customDetails.ratePerHour || 65),
-      ratePerMinute: 1.10,
+      ratePerHour: 0,
+      ratePerMinute: 0,
       languages: customDetails.languages || ['ASL', 'English'],
       spokenLanguages: ['English'],
       specialties: customDetails.specialties || ['Medical & Healthcare', 'Legal', 'Educational'],

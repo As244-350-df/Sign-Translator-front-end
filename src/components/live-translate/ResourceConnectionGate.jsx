@@ -59,7 +59,8 @@ export const ResourceConnectionGate = ({
   return (
     <div
       id="resource-connection-gate"
-      className="relative aspect-4/3 w-full bg-slate-950 rounded-3xl overflow-hidden shadow-2xl border border-indigo-500/30 flex flex-col justify-between p-5 sm:p-7 text-white select-none transition-all duration-300"
+      className="relative aspect-video w-full bg-slate-950 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-indigo-500/30 flex flex-col justify-between p-5 sm:p-7 text-white select-none transition-all duration-300"
+      style={{ aspectRatio: "16 / 9" }}
     >
       {/* Background ambient glow effect */}
       <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full bg-indigo-600/15 blur-3xl pointer-events-none" />

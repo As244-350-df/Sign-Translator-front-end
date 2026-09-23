@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd">
+  <!-- Homepage & AI Sign Recognition Live Suite -->
+  <url>
+    <loc>https://signlink.app/</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- Certified Human ASL Interpreters Directory & Instant Booking -->
+  <url>
+    <loc>https://signlink.app/?view=interpreters</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Comprehensive ASL Sign Language Dictionary & Interactive Visual Flashcards -->
+  <url>
+    <loc>https://signlink.app/?view=dictionary</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Visual Sign Language Keyboard & Text-to-Sign Engine -->
+  <url>
+    <loc>https://signlink.app/?view=keyboard</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Deaf & Hard of Hearing Community Knowledge Hub & Q&A -->
+  <url>
+    <loc>https://signlink.app/?view=community</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Accessibility Guides & ASL Learning Resources Hub -->
+  <url>
+    <loc>https://signlink.app/?view=resources</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+</urlset>

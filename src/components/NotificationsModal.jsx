@@ -1,4 +1,6 @@
-import { X, Bell, Calendar, Video, ShieldAlert, Sparkles, CheckCheck } from "lucide-react";
+import { useState } from "react";
+import { X, Bell, Calendar, Video, ShieldAlert, Sparkles, CheckCheck, Copy, CheckCircle2 } from "lucide-react";
+
 const NotificationsModal = ({
   isOpen,
   onClose,
@@ -6,12 +8,17 @@ const NotificationsModal = ({
   onMarkAllAsRead,
   onSelectNotification
 }) => {
+  const [copiedNotifId, setCopiedNotifId] = useState(null);
+
   if (!isOpen) return null;
   const getIcon = (type) => {
     switch (type) {
       case "booking":
+      case "booking_new":
         return <Calendar className="w-4 h-4 text-indigo-500" />;
       case "session":
+      case "call":
+      case "incoming_call":
         return <Video className="w-4 h-4 text-emerald-500" />;
       case "alert":
         return <ShieldAlert className="w-4 h-4 text-amber-500" />;
@@ -66,21 +73,49 @@ const NotificationsModal = ({
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                       {notif.message}
                     </p>
-                    {(notif.type === "session" || notif.type === "call" || notif.roomCode) && (
-                      <div className="mt-2 flex items-center justify-end">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectNotification(notif);
-                          }}
-                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-transform active:scale-95"
-                        >
-                          <Video className="w-3.5 h-3.5" />
-                          <span>Join (Enter Code)</span>
-                        </button>
-                      </div>
-                    )}
+                    {(() => {
+                      const extractedRoomCode = notif.roomCode || notif.meetingRoomId || notif.message?.match(/room-[a-zA-Z0-9_-]+/i)?.[0] || (notif.type === "incoming_call" || notif.type === "call" ? "room-4927" : null);
+                      if (!extractedRoomCode && notif.type !== "session" && notif.type !== "call" && notif.type !== "incoming_call") return null;
+
+                      return (
+                        <div className="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-slate-200/50 dark:border-slate-800">
+                          {extractedRoomCode ? (
+                            <div className="flex items-center space-x-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Room:</span>
+                              <span className="font-mono font-bold text-xs text-indigo-600 dark:text-indigo-400">{extractedRoomCode}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(extractedRoomCode);
+                                  setCopiedNotifId(notif.id || extractedRoomCode);
+                                  setTimeout(() => setCopiedNotifId(null), 2000);
+                                }}
+                                className="p-0.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
+                                title="Copy room code"
+                              >
+                                {copiedNotifId === (notif.id || extractedRoomCode) ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          ) : <div />}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectNotification({ ...notif, roomCode: extractedRoomCode });
+                            }}
+                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-transform active:scale-95 cursor-pointer ml-auto"
+                          >
+                            <Video className="w-3.5 h-3.5" />
+                            <span>{extractedRoomCode ? `Join Room (${extractedRoomCode})` : "Join Session"}</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>) : <div className="text-center py-10 text-slate-400">

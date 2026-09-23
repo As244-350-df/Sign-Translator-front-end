@@ -15,7 +15,8 @@ import {
   Users,
   User,
   Sparkles,
-  PhoneCall
+  PhoneCall,
+  Copy
 } from "lucide-react";
 import { SIGN_LANGUAGES } from "../data/mockData";
 import { api } from "../utils/api";
@@ -52,14 +53,15 @@ const InterpreterDirectoryView = ({
   const [isPublishing, setIsPublishing] = useState(false);
   const [callingInterpreterId, setCallingInterpreterId] = useState(null);
   const [callToast, setCallToast] = useState(null);
+  const [copiedToastCode, setCopiedToastCode] = useState(false);
 
   // Form state for becoming / updating interpreter profile
   const [regForm, setRegForm] = useState({
     title: "Certified ASL & Spoken English Interpreter",
-    ratePerHour: 65,
+    ratePerHour: 0,
     languages: ["ASL", "English"],
     specialties: ["Medical & Healthcare", "Corporate Meetings"],
-    bio: "Certified sign language interpreter with high-speed video remote interpretation experience."
+    bio: "Certified sign language interpreter providing community accessibility and high-speed video remote interpretation."
   });
 
   const specialtiesList = [
@@ -142,33 +144,66 @@ const InterpreterDirectoryView = ({
     }
   };
 
-  // Real-time call initiation directly into Firestore
+  // Real-time call initiation directly into Firestore across the network
   const handleInitiateLiveCall = async (interp) => {
     const interpId = interp.id || interp.interpreterId;
+    const generatedRoomCode = `room-${Math.floor(1000 + Math.random() * 9000)}`;
     setCallingInterpreterId(interpId);
-    setCallToast(`Ringing ${interp.name}... Alert sent to interpreter dashboard in real-time.`);
+    setCallToast({
+      interpName: interp.name,
+      roomCode: generatedRoomCode
+    });
+
+    // Auto-copy the room code to user's clipboard so they have it immediately
+    try {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(generatedRoomCode);
+      }
+    } catch {}
 
     try {
+      let callResult = null;
       if (initiateCall) {
-        await initiateCall({
+        callResult = await initiateCall({
           clientUserId: user?.userId || user?.id || "client-direct",
           clientName: user?.name || "Verified Client",
           interpreterId: interpId,
           interpreterName: interp.name,
           language: interp.languages?.[0] || "ASL",
           urgency: "urgent",
+          roomCode: generatedRoomCode,
+          meetingRoomId: generatedRoomCode,
           notes: "Real-time call started from directory"
         });
       }
-    } catch (err) {
-      console.warn("Initiate call notice:", err);
-    } finally {
-      // Transition to call view
+      const finalCode = callResult?.roomCode || callResult?.meetingRoomId || generatedRoomCode;
+
       setTimeout(() => {
         setCallingInterpreterId(null);
         setCallToast(null);
-        onStartCall(interpId, "client");
-      }, 900);
+        onStartCall({
+          sessionId: finalCode,
+          roomCode: finalCode,
+          meetingRoomId: finalCode,
+          interpreterId: interpId,
+          interpreterName: interp.name,
+          clientName: user?.name || "Client"
+        }, "client");
+      }, 1000);
+    } catch (err) {
+      console.warn("Initiate call notice:", err);
+      setTimeout(() => {
+        setCallingInterpreterId(null);
+        setCallToast(null);
+        onStartCall({
+          sessionId: generatedRoomCode,
+          roomCode: generatedRoomCode,
+          meetingRoomId: generatedRoomCode,
+          interpreterId: interpId,
+          interpreterName: interp.name,
+          clientName: user?.name || "Client"
+        }, "client");
+      }, 1000);
     }
   };
 
@@ -183,16 +218,37 @@ const InterpreterDirectoryView = ({
 
   return (
     <div className="space-y-6">
-      {/* Live Call Feedback Toast */}
+      {/* Live Call Feedback Toast with Room Code & 1-Click Copy */}
       {callToast && (
-        <div className="p-3.5 bg-emerald-600 text-white text-xs font-bold rounded-2xl flex items-center justify-between shadow-xl animate-in fade-in slide-in-from-top-2">
-          <div className="flex items-center space-x-2">
-            <PhoneCall className="w-4 h-4 animate-bounce" />
-            <span>{callToast}</span>
+        <div className="p-4 bg-emerald-600 text-white rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between shadow-2xl gap-3 animate-in fade-in slide-in-from-top-2 border border-emerald-400/30">
+          <div className="flex items-center space-x-3">
+            <PhoneCall className="w-5 h-5 animate-bounce shrink-0 text-emerald-200" />
+            <div>
+              <p className="font-bold text-xs sm:text-sm">
+                Ringing {callToast.interpName}... Dispatched across network
+              </p>
+              <p className="text-[11px] text-emerald-100">
+                Opening synchronized video room with code in dialog box
+              </p>
+            </div>
           </div>
-          <span className="text-[10px] uppercase tracking-wider bg-emerald-700 px-2.5 py-0.5 rounded-full">
-            Firestore Live Session
-          </span>
+          <div className="flex items-center space-x-2 bg-emerald-800/80 px-3 py-1.5 rounded-xl border border-emerald-400/40 w-fit">
+            <span className="text-[11px] text-emerald-200 font-semibold">Room Code:</span>
+            <span className="font-mono font-black text-sm text-white">{callToast.roomCode}</span>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(callToast.roomCode);
+                setCopiedToastCode(true);
+                setTimeout(() => setCopiedToastCode(false), 2000);
+              }}
+              className="ml-1 px-2 py-0.5 rounded-md bg-white text-emerald-800 hover:bg-emerald-50 text-[11px] font-bold flex items-center space-x-1 cursor-pointer transition-all shadow-xs"
+              title="Copy room code to clipboard"
+            >
+              {copiedToastCode ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedToastCode ? "Copied!" : "Copy"}</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -544,13 +600,13 @@ const InterpreterDirectoryView = ({
                     </div>
                   </div>
 
-                  {/* Card Footer: Rates & Actions */}
+                  {/* Card Footer: Access & Actions */}
                   <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                    <div>
-                      <span className="text-sm font-extrabold text-slate-900 dark:text-white">
-                        ${interpreter.ratePerHour || 65}
+                    <div className="flex items-center space-x-1.5">
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-extrabold flex items-center space-x-1">
+                        <span>Free Access</span>
                       </span>
-                      <span className="text-[10px] text-slate-400">/hr (${interpreter.ratePerMinute || 1.10}/min)</span>
+                      <span className="text-[10px] text-slate-400 hidden sm:inline">Community Service</span>
                     </div>
 
                     <div className="flex items-center space-x-2">
@@ -714,17 +770,12 @@ const InterpreterDirectoryView = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Rate ($/hour)
+                    Service Model
                   </label>
-                  <input
-                    type="number"
-                    min="20"
-                    max="300"
-                    required
-                    value={regForm.ratePerHour}
-                    onChange={(e) => setRegForm({ ...regForm, ratePerHour: Number(e.target.value) })}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <div className="w-full px-3.5 py-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/30 rounded-xl text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center space-x-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span>Free Community Service</span>
+                  </div>
                 </div>
 
                 <div>

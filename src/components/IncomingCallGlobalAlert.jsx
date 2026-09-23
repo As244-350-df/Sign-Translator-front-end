@@ -5,7 +5,9 @@ import {
   X,
   Sparkles,
   ShieldCheck,
-  Languages
+  Languages,
+  Copy,
+  CheckCircle2
 } from "lucide-react";
 import { firestoreService } from "../services/firestoreService";
 
@@ -36,6 +38,7 @@ export const IncomingCallGlobalAlert = ({
 }) => {
   const [incomingCall, setIncomingCall] = useState(null);
   const [countdown, setCountdown] = useState(30);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // Subscribe to real-time incoming calls for this user
   useEffect(() => {
@@ -93,6 +96,14 @@ export const IncomingCallGlobalAlert = ({
   const language = incomingCall.language || "ASL";
   const urgency = incomingCall.urgency || "urgent";
   const notes = incomingCall.notes || "Live 2-Way Video Interpretation Session";
+  const roomCode = incomingCall.roomCode || incomingCall.meetingRoomId || incomingCall.sessionId || "room-4927";
+
+  const handleCopyCode = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(roomCode);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
 
   const handleAccept = async () => {
     try {
@@ -102,7 +113,11 @@ export const IncomingCallGlobalAlert = ({
     } catch (err) {
       console.warn("Accept call notice:", err);
     }
-    const callToAccept = incomingCall;
+    const callToAccept = {
+      ...incomingCall,
+      roomCode,
+      meetingRoomId: roomCode
+    };
     setIncomingCall(null);
     onAcceptCall(callToAccept);
   };
@@ -119,7 +134,7 @@ export const IncomingCallGlobalAlert = ({
   return (
     <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-2xl animate-in slide-in-from-top-4 duration-300">
       <div className="bg-gradient-to-r from-emerald-600 via-teal-700 to-indigo-800 text-white p-5 sm:p-6 rounded-3xl shadow-2xl ring-4 ring-emerald-400/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center space-x-4">
+        <div className="flex items-start sm:items-center space-x-4">
           <div className="relative">
             <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shrink-0 animate-bounce shadow-inner">
               <PhoneIncoming className="w-7 h-7 text-white" />
@@ -148,6 +163,21 @@ export const IncomingCallGlobalAlert = ({
               <Languages className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
               <span>{language} Required • {notes}</span>
             </p>
+
+            {/* Prominent Network Room Code & Instant Copy */}
+            <div className="mt-2.5 flex items-center space-x-2 bg-black/35 px-3 py-1.5 rounded-xl border border-white/20">
+              <span className="text-[11px] text-emerald-200 font-semibold">Room Code:</span>
+              <span className="font-mono font-black text-sm text-white">{roomCode}</span>
+              <button
+                type="button"
+                onClick={handleCopyCode}
+                className="ml-1 px-2 py-0.5 rounded-md bg-white/20 hover:bg-white/30 text-white text-[11px] font-bold flex items-center space-x-1 cursor-pointer transition-colors"
+                title="Copy room code to clipboard"
+              >
+                {copiedCode ? <CheckCircle2 className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedCode ? "Copied!" : "Copy Number"}</span>
+              </button>
+            </div>
           </div>
         </div>
 

@@ -145,7 +145,7 @@ const api = {
         date: bookingData.date || "Tomorrow",
         time: bookingData.time || "10:00 AM",
         durationMinutes: bookingData.durationMinutes || 45,
-        totalCost: Number((interp.ratePerHour / 60 * (bookingData.durationMinutes || 45)).toFixed(2)),
+        totalCost: 0,
         status: "upcoming",
         notes: bookingData.notes
       };

@@ -1,8 +1,9 @@
+import { useState } from "react";
 import {
   User,
   Headphones,
   Circle,
-  DollarSign,
+  ShieldCheck,
   Clock,
   Activity,
   PhoneOff,
@@ -11,7 +12,9 @@ import {
   MessageSquare,
   Copy,
   Radio,
-  Sparkles
+  Sparkles,
+  CheckCircle2,
+  BellRing
 } from "lucide-react";
 
 export const LiveSessionHeader = ({
@@ -30,11 +33,16 @@ export const LiveSessionHeader = ({
   onToggleLayoutMode = null,
   roomId = "room-4927",
   onCopyRoomLink = null,
+  onRingInterpreters = null,
   showChat = false,
   onToggleChat = null,
   autoChatSigns = true,
   onToggleAutoChat = null
 }) => {
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [isRinging, setIsRinging] = useState(false);
+  const [ringSent, setRingSent] = useState(false);
+
   const formatTime = (secs) => {
     const m = Math.floor(secs / 60)
       .toString()
@@ -107,16 +115,45 @@ export const LiveSessionHeader = ({
         <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span className="font-mono text-white text-[11px] font-bold">{roomId}</span>
-          {onCopyRoomLink && (
-            <button
-              onClick={onCopyRoomLink}
-              title="Copy Room Link to share"
-              className="text-slate-400 hover:text-white transition-colors cursor-pointer ml-1 p-0.5"
-            >
-              <Copy className="w-3 h-3" />
-            </button>
-          )}
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(roomId);
+              setCopiedCode(true);
+              setTimeout(() => setCopiedCode(false), 2000);
+            }}
+            title="Copy Room Code / Number"
+            className="text-slate-400 hover:text-white transition-colors cursor-pointer ml-1 p-0.5 flex items-center space-x-1"
+          >
+            {copiedCode ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            {copiedCode && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
+          </button>
         </div>
+
+        {/* Ring Available Interpreters to this Room */}
+        {onRingInterpreters && perspective === "client" && (
+          <button
+            type="button"
+            onClick={async () => {
+              setIsRinging(true);
+              try {
+                await onRingInterpreters();
+                setRingSent(true);
+                setTimeout(() => setRingSent(false), 3000);
+              } catch {}
+              setIsRinging(false);
+            }}
+            disabled={isRinging}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              ringSent
+                ? "bg-emerald-600/30 border-emerald-500 text-emerald-300"
+                : "bg-indigo-600/25 border-indigo-500/60 text-indigo-300 hover:bg-indigo-600 hover:text-white"
+            }`}
+            title={`Send real-time alert with room code ${roomId} to interpreters across network`}
+          >
+            <BellRing className="w-3.5 h-3.5 text-indigo-400" />
+            <span>{ringSent ? "Alert Sent to Interpreters!" : isRinging ? "Ringing..." : "Ring Interpreters"}</span>
+          </button>
+        )}
 
         {/* Text / Chat Drawer Toggle */}
         {onToggleChat && (
@@ -161,12 +198,12 @@ export const LiveSessionHeader = ({
           </div>
         )}
 
-        {/* Metered Cost Ticker */}
-        <div className="hidden sm:flex items-center space-x-1 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-700/60 text-xs font-mono font-bold text-emerald-400">
-          <DollarSign className="w-3.5 h-3.5" />
-          <span>${currentTotalCost.toFixed(2)}</span>
+        {/* Free Accessibility Badge */}
+        <div className="hidden sm:flex items-center space-x-1 px-3 py-1 rounded-full bg-slate-900/80 border border-emerald-700/60 text-xs font-mono font-bold text-emerald-400">
+          <ShieldCheck className="w-3.5 h-3.5" />
+          <span>Free Access</span>
           <span className="text-[10px] text-slate-400 font-normal">
-            (${interpreter.ratePerMinute}/min)
+            (Community Support)
           </span>
         </div>
 

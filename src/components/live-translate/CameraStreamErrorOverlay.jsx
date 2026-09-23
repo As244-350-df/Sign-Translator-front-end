@@ -9,7 +9,8 @@ import {
   HandMetal,
   Film,
   HelpCircle,
-  Loader2
+  Loader2,
+  EyeOff
 } from "lucide-react";
 import { getSafeCurrentUrl } from "../../utils/environment";
 
@@ -21,7 +22,7 @@ export const CameraStreamErrorOverlay = ({
   onSelectInputMode,
   onShowDiagnostics
 }) => {
-  if (cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission") {
+  if (cameraStreamStatus === "loading" || cameraStreamStatus === "requesting_permission" || (cameraStreamStatus === "idle" && !cameraError)) {
     return (
       <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
         <div className="relative mb-4">
@@ -92,11 +93,17 @@ export const CameraStreamErrorOverlay = ({
   if (cameraStreamStatus === "error" && cameraError) {
     return (
       <div className="absolute inset-0 z-30 bg-slate-950/92 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
-        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-3 shadow-lg shadow-rose-500/10">
+        <div className={`w-16 h-16 rounded-2xl ${
+          cameraError.type === "hardware_muted"
+            ? "bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-amber-500/10"
+            : "bg-rose-500/10 border-rose-500/30 text-rose-400 shadow-rose-500/10"
+        } border flex items-center justify-center mb-3 shadow-lg`}>
           {cameraError.type === "permission_denied" ? (
             <ShieldAlert className="w-8 h-8" />
           ) : cameraError.type === "not_found" ? (
             <VideoOff className="w-8 h-8" />
+          ) : cameraError.type === "hardware_muted" ? (
+            <EyeOff className="w-8 h-8" />
           ) : cameraError.type === "in_use" ? (
             <AlertCircle className="w-8 h-8" />
           ) : (
@@ -104,7 +111,11 @@ export const CameraStreamErrorOverlay = ({
           )}
         </div>
 
-        <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/30 mb-2">
+        <div className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-full ${
+          cameraError.type === "hardware_muted"
+            ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+            : "bg-rose-500/20 text-rose-300 border-rose-500/30"
+        } text-xs font-bold border mb-2`}>
           <AlertCircle className="w-3.5 h-3.5" />
           <span>{cameraError.title}</span>
         </div>
